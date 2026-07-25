@@ -751,6 +751,62 @@ function isAuthorized(authHeader, expected) {
         return false;
     return timingSafeEqual(provided, expectedBuf);
 }
+// --- Public-exposure guards for the read API (rate limit + query bounds) ---
+//
+// The observatory server is safe to expose publicly (bearer-gated, read-only
+// against a KANNAKA_READONLY HRM), but a public front door still needs a
+// throughput ceiling and input bounds so a single caller can't spin the HRM
+// binary unbounded ("read-only != public-safe"). These are no-ops for the
+// local loopback workflow unless OCTO_HTTP_RATE_RPM is set.
+/** Max requests/minute per client for /api/*. 0 (or unset default) disables. */
+const HTTP_RATE_RPM = Math.max(0, Number.parseInt(process.env.OCTO_HTTP_RATE_RPM || "0", 10) || 0);
+/** Max length of a user-supplied query/seed param, to bound HRM work. */
+const MAX_QUERY_LEN = Math.max(1, Number.parseInt(process.env.OCTO_HTTP_MAX_QUERY_LEN || "512", 10) || 512);
+/** Trust the first X-Forwarded-For hop (only enable when behind a known proxy). */
+const TRUST_PROXY = process.env.OCTO_HTTP_TRUST_PROXY === "1";
+const rateBuckets = new Map();
+/** Identify the caller for rate limiting: the bearer token if keyed, else the client IP. */
+function rateKeyFor(req) {
+    const auth = req.headers.authorization;
+    if (auth && auth.startsWith("Bearer "))
+        return `t:${auth.slice(7)}`;
+    if (TRUST_PROXY) {
+        const xff = req.headers["x-forwarded-for"];
+        const first = Array.isArray(xff) ? xff[0] : xff;
+        const ip = first?.split(",")[0]?.trim();
+        if (ip)
+            return `ip:${ip}`;
+    }
+    return `ip:${req.socket.remoteAddress || "unknown"}`;
+}
+/**
+ * Token-bucket admission: capacity = HTTP_RATE_RPM, refilled continuously at
+ * HTTP_RATE_RPM tokens/minute. Returns true and consumes a token when allowed.
+ */
+function rateLimitOk(key) {
+    if (HTTP_RATE_RPM <= 0)
+        return true;
+    const now = Date.now();
+    // Opportunistic prune so a flood of distinct IPs can't grow the map without
+    // bound: when large, drop any bucket that has fully refilled (idle callers).
+    if (rateBuckets.size > 10_000) {
+        for (const [k, b] of rateBuckets) {
+            if (b.tokens + (now - b.last) * (HTTP_RATE_RPM / 60_000) >= HTTP_RATE_RPM)
+                rateBuckets.delete(k);
+        }
+    }
+    let b = rateBuckets.get(key);
+    if (!b) {
+        b = { tokens: HTTP_RATE_RPM, last: now };
+        rateBuckets.set(key, b);
+    }
+    b.tokens = Math.min(HTTP_RATE_RPM, b.tokens + (now - b.last) * (HTTP_RATE_RPM / 60_000));
+    b.last = now;
+    if (b.tokens < 1)
+        return false;
+    b.tokens -= 1;
+    return true;
+}
 async function createHttpServer() {
     const server = createServer(async (req, res) => {
         const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
@@ -758,7 +814,7 @@ async function createHttpServer() {
         // CORS headers
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
         if (req.method === 'OPTIONS') {
             res.writeHead(204);
             res.end();
@@ -776,6 +832,18 @@ async function createHttpServer() {
                     'WWW-Authenticate': 'Bearer',
                 });
                 res.end(JSON.stringify({ error: 'unauthorized' }));
+                return;
+            }
+        }
+        // Rate limit /api/* once past auth, so a public front door can't be used to
+        // spin the HRM binary unbounded. Keyed by bearer token when present, else IP.
+        if (HTTP_RATE_RPM > 0 && pathname.startsWith('/api/')) {
+            if (!rateLimitOk(rateKeyFor(req))) {
+                res.writeHead(429, {
+                    'Content-Type': 'application/json',
+                    'Retry-After': '60',
+                });
+                res.end(JSON.stringify({ error: 'rate_limited', retry_after_s: 60 }));
                 return;
             }
         }
@@ -844,6 +912,11 @@ async function createHttpServer() {
                 if (!query) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ error: 'q parameter required' }));
+                    return;
+                }
+                if (query.length > MAX_QUERY_LEN) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: `q exceeds ${MAX_QUERY_LEN} chars` }));
                     return;
                 }
                 const { stdout, stderr, isError } = await runKannaka(["recall", query, "--top-k", String(topK)]);
@@ -921,6 +994,11 @@ async function createHttpServer() {
                     res.end(JSON.stringify({ error: 'q parameter required' }));
                     return;
                 }
+                if (q.length > MAX_QUERY_LEN) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: `q exceeds ${MAX_QUERY_LEN} chars` }));
+                    return;
+                }
                 const { stdout, stderr, isError } = await runKannaka(["neighbors", q, "--top-k", String(topK), "--json"]);
                 if (isError || !stdout) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -937,6 +1015,11 @@ async function createHttpServer() {
                 if (!start) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ error: 'start parameter required' }));
+                    return;
+                }
+                if (start.length > MAX_QUERY_LEN) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: `start exceeds ${MAX_QUERY_LEN} chars` }));
                     return;
                 }
                 // Inline BFS (same logic as the MCP tool).
