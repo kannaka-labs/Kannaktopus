@@ -136,7 +136,14 @@ test_plugin_metadata() {
     assert_valid_json ".claude-plugin/plugin.json" "plugin.json is valid JSON"
     assert_file_contains ".claude-plugin/plugin.json" '"version"' "plugin.json has version field"
     assert_file_contains ".claude-plugin/plugin.json" '"name".*octo' "plugin.json has correct name"
-    assert_file_contains ".claude-plugin/plugin.json" '"skills"' "plugin.json declares skills"
+    # Claude Code 2.x auto-discovers skills/<name>/SKILL.md; a skills array in
+    # the manifest is rejected/shadowed (3951e29), so its absence is asserted.
+    if grep -q '"skills"' ".claude-plugin/plugin.json"; then
+        test_fail "plugin.json must NOT declare a skills array (skills auto-discover from skills/)"
+    else
+        test_pass "plugin.json declares no skills array (auto-discovery)"
+    fi
+    assert_dir_exists "skills" "skills/ auto-discovery directory exists"
     assert_file_contains ".claude-plugin/plugin.json" '"commands"' "plugin.json declares commands"
 
     assert_file_exists ".claude-plugin/marketplace.json" "marketplace.json exists"
