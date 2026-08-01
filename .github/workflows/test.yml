@@ -175,3 +175,13 @@ jobs:
           echo "| Smoke | ${{ needs.smoke.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Unit | ${{ needs.unit.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Integration | ${{ needs.integration.result }} |" >> $GITHUB_STEP_SUMMARY
+
+      # Without this the job only PRINTS the results and always exits 0, so the
+      # "Test Summary" check reports success next to a failing Smoke Tests in the
+      # same run. `skipped` stays acceptable: integration and e2e are gated by
+      # `if:` conditions and legitimately skip on most events.
+      - name: Fail when a dependency did not succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::Test Summary is red because a dependency did not succeed - smoke=${{ needs.smoke.result }}, unit=${{ needs.unit.result }}, integration=${{ needs.integration.result }}"
+          exit 1
