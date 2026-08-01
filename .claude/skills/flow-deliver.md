@@ -123,7 +123,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(dirname "$0")")")}/scripts/h
 
 **For Dev Context:**
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation mode
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation mode
 ✅ [Dev] Deliver Phase: [Brief description of code review]
 
 Provider Availability:
@@ -137,7 +137,7 @@ Provider Availability:
 
 **For Knowledge Context:**
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation mode
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation mode
 ✅ [Knowledge] Deliver Phase: [Brief description of document review]
 
 Provider Availability:
@@ -243,7 +243,7 @@ These spinner verb updates happen automatically - orchestrate.sh calls `update_t
 
 ```bash
 # Find the latest validation file (created within last 10 minutes)
-VALIDATION_FILE=$(find ~/.claude-octopus/results -name "ink-validation-*.md" -mmin -10 2>/dev/null | head -n1)
+VALIDATION_FILE=$(find ~/.kannaktopus/results -name "ink-validation-*.md" -mmin -10 2>/dev/null | head -n1)
 
 if [[ -z "$VALIDATION_FILE" ]]; then
   echo "❌ VALIDATION FAILED: No validation file found"
@@ -257,7 +257,7 @@ cat "$VALIDATION_FILE"
 
 **If validation fails:**
 1. Report error to user
-2. Show logs from `~/.claude-octopus/logs/`
+2. Show logs from `~/.kannaktopus/logs/`
 3. DO NOT proceed with presenting results
 4. DO NOT substitute with direct review — fallback to single-model review defeats the adversarial multi-provider validation that catches blind spots
 
@@ -307,7 +307,7 @@ Read the validation file and present:
 **Include attribution:**
 ```
 ---
-*Multi-AI Validation powered by Claude Octopus*
+*Multi-AI Validation powered by Kannaktopus*
 *Providers: 🔴 Codex | 🟡 Gemini | 🔵 Claude*
 *Full validation report: $VALIDATION_FILE*
 ```
@@ -335,7 +335,7 @@ if [[ -n "$PR_NUM" ]]; then
 ${REVIEW_SUMMARY}
 
 ---
-*Multi-AI validation by Claude Octopus (/octo:deliver)*
+*Multi-AI validation by Kannaktopus (/octo:deliver)*
 *Providers: 🔴 Codex | 🟡 Gemini | 🔵 Claude*"
 
     echo "Validation report posted to PR #${PR_NUM}"
@@ -386,7 +386,7 @@ Analyze the user's prompt and project to determine context:
 
 **For Dev Context:**
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation mode
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation mode
 ✅ [Dev] Deliver Phase: [Brief description of code review]
 📋 Session: ${CLAUDE_SESSION_ID}
 
@@ -398,7 +398,7 @@ Providers:
 
 **For Knowledge Context:**
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation mode
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation mode
 ✅ [Knowledge] Deliver Phase: [Brief description of document review]
 📋 Session: ${CLAUDE_SESSION_ID}
 
@@ -470,7 +470,7 @@ Use deliver when you need:
 Before execution, you'll see:
 
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation
 ✅ Deliver Phase: Reviewing and validating implementation
 
 Providers:
@@ -509,7 +509,7 @@ The ink phase includes automatic quality validation via PostToolUse hook:
 
 Results are saved to:
 ```
-~/.claude-octopus/results/${SESSION_ID}/ink-validation-<timestamp>.md
+~/.kannaktopus/results/${SESSION_ID}/ink-validation-<timestamp>.md
 ```
 
 ### Step 5: Present Validation Report
@@ -626,7 +626,7 @@ After successful execution, present validation report with:
 User: Review the authentication implementation in src/auth/
 
 Claude:
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation
 ✅ Deliver Phase: Reviewing authentication implementation
 
 [Executes: ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh deliver "Review authentication implementation in src/auth/"]
@@ -749,7 +749,7 @@ const JWT_SECRET = 'my-secret-key-123'; // Should be process.env.JWT_SECRET
    - Implement "remember me" functionality
    - Add comprehensive logging and monitoring
 
-Full validation report saved to: ~/.claude-octopus/results/abc-123/ink-validation-20250118-145600.md
+Full validation report saved to: ~/.kannaktopus/results/abc-123/ink-validation-20250118-145600.md
 ```
 
 ### Example 2: Validate API Endpoints
@@ -758,7 +758,7 @@ Full validation report saved to: ~/.claude-octopus/results/abc-123/ink-validatio
 User: Validate the new API endpoints are ready to ship
 
 Claude:
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider validation
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider validation
 ✅ Deliver Phase: Validating API endpoints
 
 [Executes ink workflow]

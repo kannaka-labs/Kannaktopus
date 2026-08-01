@@ -87,7 +87,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(dirname "$0")")")}/scripts/h
 **Display this banner BEFORE orchestrate.sh execution:**
 
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider definition mode
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider definition mode
 🎯 Define Phase: [Brief description of what you're defining/scoping]
 
 Provider Availability:
@@ -219,7 +219,7 @@ create_templated_context \
   "Implementation of requested feature" \
   "$out_of_scope"
 
-echo "📋 Context captured and saved to .claude-octopus/context/define-context.md"
+echo "📋 Context captured and saved to .kannaktopus/context/define-context.md"
 ```
 
 **This context will be used to:**
@@ -271,7 +271,7 @@ These spinner verb updates happen automatically - orchestrate.sh calls `update_t
 
 ```bash
 # Find the latest synthesis file (created within last 10 minutes)
-SYNTHESIS_FILE=$(find ~/.claude-octopus/results -name "grasp-synthesis-*.md" -mmin -10 2>/dev/null | head -n1)
+SYNTHESIS_FILE=$(find ~/.kannaktopus/results -name "grasp-synthesis-*.md" -mmin -10 2>/dev/null | head -n1)
 
 if [[ -z "$SYNTHESIS_FILE" ]]; then
   echo "❌ VALIDATION FAILED: No synthesis file found"
@@ -285,7 +285,7 @@ cat "$SYNTHESIS_FILE"
 
 **If validation fails:**
 1. Report error to user
-2. Show logs from `~/.claude-octopus/logs/`
+2. Show logs from `~/.kannaktopus/logs/`
 3. DO NOT proceed with presenting results
 4. DO NOT substitute with direct analysis — fallback to single-model analysis defeats the purpose of multi-provider consensus and produces narrower requirements
 
@@ -341,7 +341,7 @@ Read the synthesis file and present:
 **Include attribution:**
 ```
 ---
-*Multi-AI Problem Definition powered by Claude Octopus*
+*Multi-AI Problem Definition powered by Kannaktopus*
 *Providers: 🔴 Codex | 🟡 Gemini | 🔵 Claude*
 *Full problem definition: $SYNTHESIS_FILE*
 ```
@@ -360,7 +360,7 @@ task_status=$("${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh" get-task-status 2>/
 ```
 
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider definition mode
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider definition mode
 🎯 Define Phase: [Brief description of what you're defining/scoping]
 📋 Session: ${CLAUDE_SESSION_ID}
 📝 Tasks: ${task_status}
@@ -425,7 +425,7 @@ Use define when you need:
 Before execution, you'll see:
 
 ```
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider problem definition
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider problem definition
 🎯 Define Phase: Clarifying requirements and scope
 
 Providers:
@@ -456,7 +456,7 @@ The orchestrate.sh script will:
 
 Results are saved to:
 ```
-~/.claude-octopus/results/${SESSION_ID}/grasp-synthesis-<timestamp>.md
+~/.kannaktopus/results/${SESSION_ID}/grasp-synthesis-<timestamp>.md
 ```
 
 ### Step 4: Present Problem Definition
@@ -560,7 +560,7 @@ After successful execution, present problem definition with:
 User: Define the exact requirements for our user authentication system
 
 Claude:
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider problem definition
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider problem definition
 🎯 Define Phase: Clarifying authentication requirements
 
 [Executes: ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh define "Define exact requirements for user authentication system"]
@@ -660,7 +660,7 @@ Claude:
 
 Ready to proceed to implementation?
 
-Full problem definition saved to: ~/.claude-octopus/results/abc-123/grasp-synthesis-20250118-144530.md
+Full problem definition saved to: ~/.kannaktopus/results/abc-123/grasp-synthesis-20250118-144530.md
 ```
 
 ### Example 2: Clarify Feature Scope
@@ -669,7 +669,7 @@ Full problem definition saved to: ~/.claude-octopus/results/abc-123/grasp-synthe
 User: What exactly does the notification feature need to do?
 
 Claude:
-🐙 **CLAUDE OCTOPUS ACTIVATED** - Multi-provider problem definition
+🐙 **KANNAKTOPUS ACTIVATED** - Multi-provider problem definition
 🎯 Define Phase: Clarifying notification requirements
 
 [Executes grasp workflow]
