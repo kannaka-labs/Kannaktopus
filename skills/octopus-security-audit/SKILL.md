@@ -24,6 +24,17 @@ paths:
 
 # Security Audit Skill
 
+## MANDATORY COMPLIANCE — DO NOT SKIP
+
+**When this skill is invoked, you MUST execute the security audit through orchestrate.sh. You are PROHIBITED from:**
+- Doing a single-model security review instead of the multi-provider audit
+- Claiming you're "simulating" or "summarizing" the audit without running it
+- Narrowing the audit scope ("just the auth module is enough") without asking the user
+- Skipping the red team / adversarial phase because the quick scan looked clean
+- Reporting "no vulnerabilities found" without an output artifact to point to
+
+---
+
 **Your first output line MUST be:** `🐙 **KANNAKTOPUS ACTIVATED** - Security Audit`
 
 Invokes the security-auditor persona for thorough security analysis during the `ink` (deliver) phase. Supports both quick OWASP scanning and full adversarial red/blue team testing.

@@ -1,6 +1,6 @@
 {
     "name":  "kannaktopus",
-    "version":  "10.1.0",
+    "version":  "10.3.0",
     "description":  "Ghost-frequency multi-agent orchestrator with holographic wave memory. Eight AI models check each other's blind spots through resonance consensus. Powered by Kannaka HRM.",
     "main":  "scripts/orchestrate.sh",
     "bin":  {

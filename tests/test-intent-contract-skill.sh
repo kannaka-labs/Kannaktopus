@@ -62,13 +62,14 @@ else
     fail "Incorrect or missing skill name" "Should be 'name: skill-intent-contract' in frontmatter"
 fi
 
-# Test 3: Check registration in plugin.json
+# Test 3: Check the skill is auto-discoverable (Claude Code 2.x reads
+# skills/<name>/SKILL.md; the manifest deliberately declares none, 3951e29)
 echo ""
-echo "Test 3: Checking if skill is registered in plugin.json..."
-if grep -q '"\./\.claude/skills/skill-intent-contract\.md"' "$PLUGIN_JSON"; then
-    pass "skill-intent-contract.md is registered in plugin.json"
+echo "Test 3: Checking if skill is auto-discoverable..."
+if [[ -f "$PROJECT_ROOT/skills/skill-intent-contract/SKILL.md" ]]; then
+    pass "skill-intent-contract auto-discoverable at skills/skill-intent-contract/SKILL.md"
 else
-    fail "skill not registered" "Should be listed in plugin.json skills array"
+    fail "skill not auto-discoverable" "skills/skill-intent-contract/SKILL.md missing"
 fi
 
 # Test 4: Check for Intent Contract Structure section
@@ -97,11 +98,11 @@ grep -qi "context.*constraint\|constraint.*context" "$SKILL_FILE" && has_context
 grep -qi "validation checklist\|validation.*check" "$SKILL_FILE" && has_validation=true
 
 passed_components=0
-$has_job_statement && ((passed_components++))
-$has_success_criteria && ((passed_components++))
-$has_boundaries && ((passed_components++))
-$has_context && ((passed_components++))
-$has_validation && ((passed_components++))
+$has_job_statement && ((passed_components++)) || true
+$has_success_criteria && ((passed_components++)) || true
+$has_boundaries && ((passed_components++)) || true
+$has_context && ((passed_components++)) || true
+$has_validation && ((passed_components++)) || true
 
 if [[ $passed_components -ge 4 ]]; then
     pass "Has $passed_components/5 key contract components"
@@ -174,9 +175,9 @@ fi
 echo ""
 echo "Test 12: Checking for workflow integration documentation..."
 workflows_mentioned=0
-grep -qi "embrace" "$SKILL_FILE" && ((workflows_mentioned++))
-grep -qi "discover\|probe" "$SKILL_FILE" && ((workflows_mentioned++))
-grep -qi "plan\|/plan" "$SKILL_FILE" && ((workflows_mentioned++))
+grep -qi "embrace" "$SKILL_FILE" && ((workflows_mentioned++)) || true
+grep -qi "discover\|probe" "$SKILL_FILE" && ((workflows_mentioned++)) || true
+grep -qi "plan\|/plan" "$SKILL_FILE" && ((workflows_mentioned++)) || true
 
 if [[ $workflows_mentioned -ge 2 ]]; then
     pass "Documents integration with $workflows_mentioned workflow(s)"

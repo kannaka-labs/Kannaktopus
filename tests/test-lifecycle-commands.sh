@@ -22,14 +22,14 @@ echo -e "${BLUE}🧪 Testing v7.22.0 Lifecycle Commands${NC}"
 echo ""
 
 pass() {
-    ((TEST_COUNT++))
-    ((PASS_COUNT++))
+    ((TEST_COUNT++)) || true
+    ((PASS_COUNT++)) || true
     echo -e "${GREEN}✅ PASS${NC}: $1"
 }
 
 fail() {
-    ((TEST_COUNT++))
-    ((FAIL_COUNT++))
+    ((TEST_COUNT++)) || true
+    ((FAIL_COUNT++)) || true
     echo -e "${RED}❌ FAIL${NC}: $1"
     echo -e "   ${YELLOW}$2${NC}"
 }
@@ -80,14 +80,13 @@ for skill in "${LIFECYCLE_SKILLS[@]}"; do
 done
 
 echo ""
-echo "Test 4: Checking skills are registered in plugin.json..."
-PLUGIN_JSON="$PROJECT_ROOT/.claude-plugin/plugin.json"
+echo "Test 4: Checking skills are auto-discoverable (skills/<name>/SKILL.md)..."
 for skill in "${LIFECYCLE_SKILLS[@]}"; do
-    skill_path="./.claude/skills/$skill"
-    if grep -q "\"$skill_path\"" "$PLUGIN_JSON"; then
-        pass "$skill registered in plugin.json"
+    skill_dir="${skill%.md}"
+    if [[ -f "$PROJECT_ROOT/skills/$skill_dir/SKILL.md" ]]; then
+        pass "$skill_dir auto-discoverable at skills/$skill_dir/SKILL.md"
     else
-        fail "$skill not registered" "Should be in plugin.json skills array"
+        fail "$skill_dir not auto-discoverable" "skills/$skill_dir/SKILL.md missing"
     fi
 done
 

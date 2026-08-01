@@ -128,9 +128,9 @@ if [[ -f "$MARKETPLACE_JSON" ]]; then
     echo "$description" | grep -qi "automat\|orchestrat" && mentions_automation=true
 
     feature_count=0
-    $mentions_multi_ai && ((feature_count++))
-    $mentions_workflows && ((feature_count++))
-    $mentions_automation && ((feature_count++))
+    $mentions_multi_ai && ((feature_count++)) || true
+    $mentions_workflows && ((feature_count++)) || true
+    $mentions_automation && ((feature_count++)) || true
 
     if [[ $feature_count -ge 1 ]]; then
         pass "marketplace.json description mentions core features"
@@ -155,17 +155,17 @@ if [[ -f "$PLUGIN_JSON" ]]; then
     fi
 fi
 
-# Test 7: Verify skill count in plugin.json
+# Test 7: Verify the auto-discovery skill count matches the description claim
 echo ""
-echo "Test 7: Checking skill count in plugin.json..."
+echo "Test 7: Checking auto-discovered skill count vs plugin.json description..."
 if [[ -f "$PLUGIN_JSON" ]]; then
-    SKILL_COUNT=$(grep -o '"\./\.claude/skills/[^"]*\.md"' "$PLUGIN_JSON" | wc -l | tr -d ' ')
-    EXPECTED_SKILLS=50
+    SKILL_COUNT=$(find "$PROJECT_ROOT/skills" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
+    CLAIMED_SKILLS=$(grep -o '[0-9]* skills' "$PLUGIN_JSON" | head -1 | grep -o '[0-9]*')
 
-    if [[ $SKILL_COUNT -eq $EXPECTED_SKILLS ]]; then
-        pass "plugin.json has $SKILL_COUNT skills (expected: $EXPECTED_SKILLS)"
+    if [[ -n "$CLAIMED_SKILLS" && $SKILL_COUNT -eq $CLAIMED_SKILLS ]]; then
+        pass "skills/ ships $SKILL_COUNT skills, matching the description claim"
     else
-        fail "Skill count mismatch" "Found: $SKILL_COUNT, Expected: $EXPECTED_SKILLS"
+        fail "Skill count mismatch" "skills/ has: $SKILL_COUNT, description claims: ${CLAIMED_SKILLS:-none}"
     fi
 fi
 
@@ -180,15 +180,13 @@ if [[ -f "$PLUGIN_JSON" ]]; then
     fi
 fi
 
-# Test 9: Verify new skill skill-intent-contract.md is registered
+# Test 9: Verify the intent contract skill is auto-discoverable
 echo ""
-echo "Test 9: Checking if new intent contract skill is registered..."
-if [[ -f "$PLUGIN_JSON" ]]; then
-    if grep -q '"\./\.claude/skills/skill-intent-contract\.md"' "$PLUGIN_JSON"; then
-        pass "New skill-intent-contract.md skill is registered"
-    else
-        fail "skill-intent-contract.md not registered" "v7.11.0 feature: intent contract skill should be registered"
-    fi
+echo "Test 9: Checking if the intent contract skill is auto-discoverable..."
+if [[ -f "$PROJECT_ROOT/skills/skill-intent-contract/SKILL.md" ]]; then
+    pass "skill-intent-contract auto-discoverable at skills/skill-intent-contract/SKILL.md"
+else
+    fail "skill-intent-contract not auto-discoverable" "skills/skill-intent-contract/SKILL.md missing"
 fi
 
 # Test 10: Verify core command files exist
@@ -209,7 +207,7 @@ for file in "${CORE_COMMANDS[@]}"; do
         pass "Core command exists: $file"
     else
         fail "Missing core command" "Expected: $file"
-        ((missing_files++))
+        ((missing_files++)) || true
     fi
 done
 
@@ -339,7 +337,7 @@ for skill_file in "$PROJECT_ROOT/.claude/skills/"*.md; do
     if ! echo "$skill_name" | grep -qE "^($VALID_PREFIXES)"; then
         fail "Skill '$(basename "$skill_file")' has invalid name prefix: '$skill_name'" \
             "Must use skill-, flow-, sys-, or octopus- prefix"
-        ((invalid_skills++))
+        ((invalid_skills++)) || true
     fi
 done
 if [[ $invalid_skills -eq 0 ]]; then
@@ -358,7 +356,7 @@ for cmd_file in "$PROJECT_ROOT/.claude/commands/"*.md; do
     else
         fail "Command '$(basename "$cmd_file")' has unexpected line 2 format: '$line2'" \
             "Expected 'command: <name>' or 'name: <name>'"
-        ((mixed_format++))
+        ((mixed_format++)) || true
     fi
 done
 if [[ $mixed_format -eq 0 ]]; then

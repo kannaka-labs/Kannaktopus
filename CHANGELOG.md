@@ -1,3 +1,15 @@
+## [10.3.0] - 2026-07-07
+
+### Added
+
+- **8 orphaned flat skills migrated to directory format** — these skills were declared in the pre-2.x flat manifest but had no `skills/<name>/SKILL.md` directory, so after the flat array was dropped they no longer auto-loaded. Migrated verbatim, using the frontmatter `name` for the directory (mind the `octopus-*` renames): `skill-security-audit` → `octopus-security-audit`, `skill-deep-research` → `octopus-research`, `skill-ui-ux-design` → `octopus-ui-ux-design`, plus `flow-parallel`, `skill-factory`, `skill-ship`, `skill-verification-gate`, `skill-review-response`.
+
+## [10.2.0] - 2026-07-07
+
+### Fixed
+
+- **Skills auto-discover under Claude Code 2.x** — dropped the 51-entry flat `skills` array from `.claude-plugin/plugin.json`. Claude Code 2.x rejects file-path skill entries (skills must be folders with `SKILL.md` at their root), and listing the folders explicitly triggers per-folder "folder-shadowed-by-manifest" warnings, so removal is the clean fix. The `skills/<name>/SKILL.md` folders are the shipped skill set from here on.
+
 ## [10.1.0] - 2026-06-04
 
 ### Added

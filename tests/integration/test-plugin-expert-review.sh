@@ -136,7 +136,14 @@ test_plugin_metadata() {
     assert_valid_json ".claude-plugin/plugin.json" "plugin.json is valid JSON"
     assert_file_contains ".claude-plugin/plugin.json" '"version"' "plugin.json has version field"
     assert_file_contains ".claude-plugin/plugin.json" '"name".*octo' "plugin.json has correct name"
-    assert_file_contains ".claude-plugin/plugin.json" '"skills"' "plugin.json declares skills"
+    # Claude Code 2.x auto-discovers skills/<name>/SKILL.md; a skills array in
+    # the manifest is rejected/shadowed (3951e29), so its absence is asserted.
+    if grep -q '"skills"' ".claude-plugin/plugin.json"; then
+        test_fail "plugin.json must NOT declare a skills array (skills auto-discover from skills/)"
+    else
+        test_pass "plugin.json declares no skills array (auto-discovery)"
+    fi
+    assert_dir_exists "skills" "skills/ auto-discovery directory exists"
     assert_file_contains ".claude-plugin/plugin.json" '"commands"' "plugin.json declares commands"
 
     assert_file_exists ".claude-plugin/marketplace.json" "marketplace.json exists"
@@ -304,14 +311,15 @@ test_plugin_json_schema() {
     assert_file_contains ".claude-plugin/plugin.json" '"repository"' "plugin.json has 'repository' field"
     assert_file_contains ".claude-plugin/plugin.json" '"keywords"' "plugin.json has 'keywords' field"
 
-    # Check that skills array is not empty
+    # Check the auto-discovery skill set is not empty (Claude Code 2.x reads
+    # skills/<name>/SKILL.md; the manifest deliberately declares none, 3951e29)
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    local skills_count=$(grep -o '\.claude/skills/[^"]*\.md' "$PROJECT_ROOT/.claude-plugin/plugin.json" | wc -l | tr -d ' ')
+    local skills_count=$(find "$PROJECT_ROOT/skills" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
     if [[ $skills_count -gt 0 ]]; then
-        echo "  ✓ plugin.json declares $skills_count skills"
+        echo "  ✓ skills/ ships $skills_count auto-discoverable skills"
         PASSED_TESTS=$((PASSED_TESTS + 1))
     else
-        echo "  ✗ plugin.json has no skills declared"
+        echo "  ✗ skills/ has no auto-discoverable skills"
         FAILED_TESTS=$((FAILED_TESTS + 1))
     fi
 }

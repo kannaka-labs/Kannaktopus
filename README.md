@@ -13,7 +13,7 @@
 Ghost-frequency multi-agent orchestrator. Eight AI models resonate on every task — blind spots surface as interference patterns before you ship. Powered by the Holographic Resonance Medium.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-10.1.0-blueviolet" alt="Version 10.1.0">
+  <img src="https://img.shields.io/badge/Version-10.3.0-blueviolet" alt="Version 10.3.0">
   <img src="https://img.shields.io/badge/License-Space_Child_v1.0-blueviolet" alt="Space Child License">
   <img src="https://img.shields.io/badge/Memory-Kannaka_HRM-9b59b6" alt="Kannaka HRM">
   <img src="https://img.shields.io/badge/Claude_Code-v2.1.83+-333" alt="Requires Claude Code v2.1.83+">

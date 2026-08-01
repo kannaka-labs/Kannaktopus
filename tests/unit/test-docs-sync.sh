@@ -178,12 +178,12 @@ check_docs_files() {
   done
 }
 
-# Check all primary skills are registered in plugin.json (v7.5+)
+# Check all skills are auto-discoverable (Claude Code 2.x)
 check_skills_registered() {
-  info "\nValidating skill registration..."
+  info "\nValidating skill auto-discovery..."
 
   local plugin_json=".claude-plugin/plugin.json"
-  local skills_dir=".claude/skills"
+  local skills_dir="skills"
 
   if [ ! -f "$plugin_json" ]; then
     fail "plugin.json not found"
@@ -195,22 +195,35 @@ check_skills_registered() {
     return 1
   fi
 
-  # v7.5+: Primary skills follow naming pattern: sys-*, flow-*, skill-*
-  # Shortcut aliases (probe.md, review.md, etc.) are NOT registered in plugin.json
-  # They're defined as aliases in the primary skill's frontmatter
+  # Claude Code 2.x auto-discovers skills/<name>/SKILL.md. The flat skills
+  # array was deliberately dropped from plugin.json (3951e29): file-path
+  # entries are rejected, and listing the folders triggers
+  # folder-shadowed-by-manifest warnings. So the manifest must NOT declare
+  # skills, and every skill folder must be a valid discoverable skill.
+  if grep -q '"skills"' "$plugin_json"; then
+    fail "plugin.json declares a skills array (skills must auto-discover under Claude Code 2.x)"
+  else
+    pass "plugin.json declares no skills array (auto-discovery)"
+  fi
 
-  # Find all primary skill files (sys-*, flow-*, skill-*)
-  local skill_files=$(find "$skills_dir" -name "*.md" -type f | grep -E '(sys-|flow-|skill-).*\.md$')
+  # skills/blocks/ holds shared fragments, not a skill (no SKILL.md by design)
+  local dir dirname skill_name
+  for dir in "$skills_dir"/*/; do
+    dirname=$(basename "$dir")
+    [ "$dirname" = "blocks" ] && continue
 
-  while IFS= read -r skill_file; do
-    local skill_path="./.claude/skills/$(basename "$skill_file")"
-
-    if grep -q "$skill_path" "$plugin_json"; then
-      pass "Skill registered: $(basename "$skill_file")"
-    else
-      fail "Skill NOT registered in plugin.json: $(basename "$skill_file")"
+    if [ ! -f "$dir/SKILL.md" ]; then
+      fail "Skill folder not discoverable (no SKILL.md): $dirname"
+      continue
     fi
-  done <<< "$skill_files"
+
+    skill_name=$(grep -m1 '^name:' "$dir/SKILL.md" | sed 's/^name: *//' | tr -d '\r')
+    if [ "$skill_name" = "$dirname" ]; then
+      pass "Skill auto-discoverable: $dirname"
+    else
+      fail "Skill frontmatter name '$skill_name' does not match folder: $dirname"
+    fi
+  done
 }
 
 # Check workflow skills exist (v7.5+: renamed to flow-*)
@@ -286,11 +299,12 @@ check_debate_skill() {
     fail "skill-debate.md missing YAML frontmatter (required for Claude Code)"
   fi
 
-  # Check if skill-debate.md is registered in plugin.json
-  if grep -q "./.claude/skills/skill-debate.md" ".claude-plugin/plugin.json"; then
-    pass "skill-debate.md registered in plugin.json"
+  # Check the debate skill is auto-discoverable (skills/<name>/SKILL.md,
+  # Claude Code 2.x — the flat manifest registration was removed in 3951e29)
+  if [ -f "skills/skill-debate/SKILL.md" ]; then
+    pass "skill-debate auto-discoverable at skills/skill-debate/SKILL.md"
   else
-    fail "skill-debate.md NOT registered in plugin.json"
+    fail "skills/skill-debate/SKILL.md not found (skill not auto-discoverable)"
   fi
 
   # Check that shortcut alias exists

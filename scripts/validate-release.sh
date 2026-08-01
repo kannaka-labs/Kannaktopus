@@ -171,30 +171,36 @@ echo ""
 # ============================================================================
 # 6. SKILL REGISTRATION CHECK
 # ============================================================================
-echo "🎯 Checking skill registration..."
+echo "🎯 Checking skill auto-discovery (skills/<name>/SKILL.md)..."
 
-SKILL_FILES=$(ls "$ROOT_DIR/.claude/skills/"*.md 2>/dev/null | xargs -n1 basename | sort)
-REGISTERED_SKILLS=$(grep -o '\.claude/skills/[^"]*\.md' "$ROOT_DIR/.claude-plugin/plugin.json" | sed 's|.*\.claude/skills/||' | sort)
-
-for skill_file in $SKILL_FILES; do
-    if ! echo "$REGISTERED_SKILLS" | grep -q "^${skill_file}$"; then
-        echo -e "  ${RED}ERROR: Skill file '$skill_file' not registered in plugin.json${NC}"
+# Claude Code 2.x auto-discovers skills/<name>/SKILL.md; the manifest
+# deliberately declares no skills array (3951e29). Validate the folder set:
+# every folder (except blocks/, shared fragments) is a discoverable skill
+# whose frontmatter name matches its folder.
+skill_count=0
+for skill_dir in "$ROOT_DIR/skills/"*/; do
+    dir_name=$(basename "$skill_dir")
+    [[ "$dir_name" == "blocks" ]] && continue
+    if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+        echo -e "  ${RED}ERROR: skills/$dir_name/ has no SKILL.md (not discoverable)${NC}"
+        ((errors++))
+        continue
+    fi
+    fm_name=$(grep -m1 '^name:' "$skill_dir/SKILL.md" | sed 's/^name: *//' | tr -d '\r')
+    if [[ "$fm_name" != "$dir_name" ]]; then
+        echo -e "  ${RED}ERROR: skills/$dir_name/SKILL.md frontmatter name is '$fm_name'${NC}"
         ((errors++))
     fi
+    skill_count=$((skill_count + 1))
 done
 
-for reg_skill in $REGISTERED_SKILLS; do
-    if ! echo "$SKILL_FILES" | grep -q "^${reg_skill}$"; then
-        echo -e "  ${RED}ERROR: Registered skill '$reg_skill' does not exist${NC}"
-        ((errors++))
-    fi
-done
+if grep -q '"skills"' "$ROOT_DIR/.claude-plugin/plugin.json"; then
+    echo -e "  ${RED}ERROR: plugin.json declares a skills array (must auto-discover)${NC}"
+    ((errors++))
+fi
 
-skill_count=$(echo "$SKILL_FILES" | wc -l | tr -d ' ')
-reg_skill_count=$(echo "$REGISTERED_SKILLS" | wc -l | tr -d ' ')
-
-if [[ "$skill_count" == "$reg_skill_count" ]] && [[ $errors -eq 0 ]]; then
-    echo -e "  ${GREEN}✓ All $skill_count skills properly registered${NC}"
+if [[ $errors -eq 0 ]]; then
+    echo -e "  ${GREEN}✓ All $skill_count skills auto-discoverable${NC}"
 fi
 
 echo ""
