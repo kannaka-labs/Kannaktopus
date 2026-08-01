@@ -11,8 +11,8 @@
     {
       "name": "octo",
       "source": "./",
-      "description": "v10.1.0 - Discipline mode (8 auto-invoke gates), Cursor + OpenCode support, two-stage review, verification gate, Codex CLI compatibility. 32 personas, 49 commands, 51 skills. Run /octo:setup.",
-      "version": "10.1.0",
+      "description": "v10.3.0 - Discipline mode (8 auto-invoke gates), Cursor + OpenCode support, two-stage review, verification gate, Codex CLI compatibility. 32 personas, 49 commands, 51 skills. Run /octo:setup.",
+      "version": "10.3.0",
       "author": {
         "name": "Nick Flach"
       },
