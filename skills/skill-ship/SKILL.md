@@ -11,6 +11,17 @@ invocation: human_only
 
 # Ship Project - Multi-AI Delivery Validation
 
+## MANDATORY COMPLIANCE — DO NOT SKIP
+
+**When this skill is invoked, you MUST run the full delivery pipeline. You are PROHIBITED from:**
+- Skipping the Multi-AI security audit or substituting single-provider analysis
+- Claiming you're "simulating" the audit instead of executing orchestrate.sh
+- Marking work as shipped while verification steps are incomplete or failing
+- Skipping lessons capture or archival because "the code is what matters"
+- Declaring readiness without evidence from the audit output
+
+---
+
 Finalize and deliver completed work with Multi-AI security audit, lessons capture, and archival.
 
 **Core principle:** Verify ready -> Multi-AI audit -> Capture lessons -> Archive -> Ship.

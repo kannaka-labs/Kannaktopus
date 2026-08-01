@@ -15,6 +15,16 @@ paths:
 
 # Verification Gate
 
+## MANDATORY COMPLIANCE — DO NOT SKIP
+
+**When this gate applies, you CANNOT SKIP verification. You are PROHIBITED from:**
+- Claiming work is complete, fixed, or passing without running the verification command this turn
+- Trusting a subagent's or provider's success report without independent evidence
+- Treating orchestrate.sh exit code 0 as proof of quality without inspecting the output
+- Committing, opening PRs, or marking tasks done ahead of fresh verification evidence
+
+---
+
 ## The Iron Law
 
 ```
