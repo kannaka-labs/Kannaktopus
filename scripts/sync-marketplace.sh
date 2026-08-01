@@ -15,8 +15,10 @@ CHECK_ONLY=false
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=true
 
 # Count shipped plugin artifacts.
-# Source of truth is .claude/skills/*.md (excludes .tmpl templates)
-SKILL_COUNT=$(find "$ROOT_DIR/.claude/skills" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+# Source of truth is skills/<name>/SKILL.md — the set Claude Code 2.x
+# auto-discovers and ships to plugin consumers (.claude/skills/*.md is the
+# legacy flat layout, kept for in-repo project use only).
+SKILL_COUNT=$(find "$ROOT_DIR/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" -type f 2>/dev/null | wc -l | tr -d ' ')
 COMMAND_COUNT=$(find "$ROOT_DIR/.claude/commands" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
 PERSONA_COUNT=$(find "$ROOT_DIR/agents/personas" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
 
