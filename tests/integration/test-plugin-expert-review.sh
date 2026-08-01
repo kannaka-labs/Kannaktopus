@@ -311,14 +311,15 @@ test_plugin_json_schema() {
     assert_file_contains ".claude-plugin/plugin.json" '"repository"' "plugin.json has 'repository' field"
     assert_file_contains ".claude-plugin/plugin.json" '"keywords"' "plugin.json has 'keywords' field"
 
-    # Check that skills array is not empty
+    # Check the auto-discovery skill set is not empty (Claude Code 2.x reads
+    # skills/<name>/SKILL.md; the manifest deliberately declares none, 3951e29)
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    local skills_count=$(grep -o '\.claude/skills/[^"]*\.md' "$PROJECT_ROOT/.claude-plugin/plugin.json" | wc -l | tr -d ' ')
+    local skills_count=$(find "$PROJECT_ROOT/skills" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
     if [[ $skills_count -gt 0 ]]; then
-        echo "  ✓ plugin.json declares $skills_count skills"
+        echo "  ✓ skills/ ships $skills_count auto-discoverable skills"
         PASSED_TESTS=$((PASSED_TESTS + 1))
     else
-        echo "  ✗ plugin.json has no skills declared"
+        echo "  ✗ skills/ has no auto-discoverable skills"
         FAILED_TESTS=$((FAILED_TESTS + 1))
     fi
 }
