@@ -26,7 +26,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, delimiter as pathDelimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile, readdir, access } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -37,6 +37,89 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(__dirname, "../..");
 const ORCHESTRATE_SH = resolve(PLUGIN_ROOT, "scripts/orchestrate.sh");
+// --- orchestrate.sh launcher (issues #46 / #29) ---
+//
+// Windows has no notion of an executable `.sh`, so `execFile(ORCHESTRATE_SH, …)`
+// there fails with a bare ENOENT that says nothing about the real cause. On
+// win32 we launch `bash <script> <args…>` instead. `bash` is resolved from PATH
+// rather than a hardcoded Git install location, so Git Bash, an MSYS2 bash or
+// WSL's bash all satisfy it — and every one of them accepts native Windows
+// paths, so `cwd` and each argument pass through untranslated.
+//
+// POSIX keeps exec'ing the script directly: the platform that already works is
+// deliberately left untouched.
+//
+// This block is mirrored in openclaw/src/index.ts — the two adapters ship as
+// separate packages with no shared module, and drifting apart is exactly how
+// they came to have the same bug in two files.
+/** Candidate file names for `bash`, in PATH-scan order, per platform. */
+const BASH_EXECUTABLE_NAMES = process.platform === "win32" ? ["bash.exe", "bash"] : ["bash"];
+/**
+ * Actionable message returned in the tool response — not just written in the
+ * docs — when no bash can be found. A silent ENOENT from execFile is what makes
+ * this undiagnosable today.
+ */
+const BASH_NOT_FOUND_MESSAGE = [
+    "`bash` was not found on PATH, and Kannaktopus needs it on Windows.",
+    "",
+    "orchestrate.sh is a bash script; Windows cannot execute it directly, so it is",
+    "launched as `bash orchestrate.sh …`. Install Git for Windows (which ships Git",
+    "Bash) and make sure its bash is on PATH — the default installer location is",
+    "C:\\Program Files\\Git\\bin\\bash.exe. A WSL or MSYS2 bash on PATH works too.",
+    "",
+    "Restart your MCP client afterwards so it inherits the updated PATH.",
+].join("\n");
+/**
+ * Find `bash` by scanning PATH ourselves rather than handing a bare name to
+ * execFile, so a missing bash is a diagnosable condition instead of an ENOENT
+ * that is indistinguishable from a missing orchestrate.sh.
+ */
+function findBashOnPath() {
+    const rawPath = process.env.PATH ?? "";
+    if (!rawPath)
+        return null;
+    for (const entry of rawPath.split(pathDelimiter)) {
+        // Windows PATH entries are sometimes quoted; an empty entry means "cwd",
+        // which we do not want to search for an interpreter.
+        const dir = entry.trim().replace(/^"|"$/g, "");
+        if (!dir)
+            continue;
+        for (const name of BASH_EXECUTABLE_NAMES) {
+            const candidate = resolve(dir, name);
+            if (existsSync(candidate))
+                return candidate;
+        }
+    }
+    return null;
+}
+function resolveScriptLaunch(script, args) {
+    if (process.platform !== "win32") {
+        return { ok: true, file: script, args };
+    }
+    const bash = findBashOnPath();
+    if (!bash)
+        return { ok: false, error: BASH_NOT_FOUND_MESSAGE };
+    return { ok: true, file: bash, args: [script, ...args] };
+}
+/**
+ * Windows-only environment supplement for the orchestrate child. The forwarded
+ * POSIX allowlist below is the minimum a POSIX child needs; on Windows the
+ * equivalent minimum is different — without SystemRoot and PATHEXT, programs
+ * that bash goes on to spawn fail in ways that look nothing like a launcher
+ * problem. Still an explicit allowlist: process.env is never forwarded whole.
+ */
+function windowsChildEnv() {
+    if (process.platform !== "win32")
+        return {};
+    return {
+        ...(process.env.SystemRoot && { SystemRoot: process.env.SystemRoot }),
+        ...(process.env.SystemDrive && { SystemDrive: process.env.SystemDrive }),
+        ...(process.env.PATHEXT && { PATHEXT: process.env.PATHEXT }),
+        ...(process.env.USERPROFILE && { USERPROFILE: process.env.USERPROFILE }),
+        ...(process.env.TEMP && { TEMP: process.env.TEMP }),
+        ...(process.env.TMP && { TMP: process.env.TMP }),
+    };
+}
 // Kannaka HRM binary configuration
 const KANNAKA_BIN = process.env.KANNAKA_BIN || "kannaka";
 /**
@@ -371,13 +454,20 @@ function generateConstellation(observe) {
 async function runOrchestrate(command, prompt, flags = [], postFlags = []) {
     // Global flags MUST come before the command; subcommand flags go after
     const args = [...flags, command, ...postFlags, prompt];
+    // On win32 this becomes `bash <orchestrate.sh> <args…>`; on POSIX the script
+    // is exec'd directly, exactly as before.
+    const launch = resolveScriptLaunch(ORCHESTRATE_SH, args);
+    if (!launch.ok) {
+        return { text: `Error executing ${command}: ${launch.error}`, isError: true };
+    }
     try {
-        const { stdout, stderr } = await execFileAsync(ORCHESTRATE_SH, args, {
+        const { stdout, stderr } = await execFileAsync(launch.file, launch.args, {
             cwd: PLUGIN_ROOT,
             timeout: 300_000,
             env: {
                 // Security: only forward required env vars, not the full process.env
                 PATH: process.env.PATH,
+                ...windowsChildEnv(),
                 HOME: process.env.HOME,
                 TMPDIR: process.env.TMPDIR,
                 SHELL: process.env.SHELL,

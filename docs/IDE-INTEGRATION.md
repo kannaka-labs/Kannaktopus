@@ -190,11 +190,13 @@ require('mcp').setup({
 
 Visual Studio 2026 supports `.mcp.json` natively via its AI integration, but Kannaktopus has significant constraints on Windows:
 
-**The challenge:** `orchestrate.sh` is an 18K-line bash script using Linux-specific features (PIDs, signals, named pipes, GNU tools). It cannot run natively on Windows.
+**Prerequisite: Git Bash.** `orchestrate.sh` is an 18K-line bash script using POSIX features (PIDs, signals, named pipes, GNU tools), so it needs a bash to run it. Windows cannot execute a `.sh` file directly, so both adapters — the MCP server and the OpenClaw extension — launch it as `bash orchestrate.sh …` on Windows, resolving `bash` from `PATH`. Git Bash (bundled with [Git for Windows](https://git-scm.com/download/win), default `C:\Program Files\Git\bin\bash.exe`), an MSYS2 bash, or WSL's `bash.exe` all satisfy this. If no `bash` is on `PATH`, the tools return an error saying so rather than a bare `ENOENT`.
+
+The bash-native features the script relies on are not all equally happy under Git Bash, so a heavier-weight option below may still suit you better for long workflows.
 
 **Options:**
 
-1. **WSL2 (Recommended if you must):** Install Kannaktopus inside WSL2. Visual Studio can invoke the MCP server through `wsl.exe`:
+1. **WSL2 (Most faithful to the target environment):** Install Kannaktopus inside WSL2. Visual Studio can invoke the MCP server through `wsl.exe`:
    ```json
    {
      "servers": {

@@ -7,15 +7,15 @@
                 "kannaktopus":  "scripts/orchestrate.sh"
             },
     "scripts":  {
-                    "test":  "make test",
-                    "test:smoke":  "make test-smoke",
-                    "test:unit":  "make test-unit",
-                    "test:integration":  "make test-integration",
-                    "test:e2e":  "make test-e2e",
-                    "test:all":  "make test-all",
-                    "test:coverage":  "make test-coverage",
-                    "test:verbose":  "make test-verbose",
-                    "test:clean":  "make clean-tests",
+                    "test":  "node scripts/run-make.mjs test",
+                    "test:smoke":  "node scripts/run-make.mjs test-smoke",
+                    "test:unit":  "node scripts/run-make.mjs test-unit",
+                    "test:integration":  "node scripts/run-make.mjs test-integration",
+                    "test:e2e":  "node scripts/run-make.mjs test-e2e",
+                    "test:all":  "node scripts/run-make.mjs test-all",
+                    "test:coverage":  "node scripts/run-make.mjs test-coverage",
+                    "test:verbose":  "node scripts/run-make.mjs test-verbose",
+                    "test:clean":  "node scripts/run-make.mjs clean-tests",
                     "prepublishOnly":  "node -e \"const fs=require('fs'); const p=require('./package.json'); if(!/^\\d+\\.\\d+\\.\\d+$/.test(p.version)){process.exit(1)} for(const f of ['scripts/orchestrate.sh','README.md']){fs.accessSync(f)}\""
                 },
     "files":  [
