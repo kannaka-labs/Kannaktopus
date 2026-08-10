@@ -32,11 +32,19 @@ const BLOCKED_ENV_VARS = new Set([
 function textResult(text) {
     return { content: [{ type: "text", text }], details: {} };
 }
-// --- Execution ---
+// --- Configuration ---
 // Allowed autonomy values for runtime validation
 const VALID_AUTONOMY = new Set(["supervised", "semi-autonomous", "autonomous"]);
-async function executeOrchestrate(command, prompt, flags = [], postFlags = []) {
-    const orchestrateSh = resolve(PLUGIN_ROOT, "scripts/orchestrate.sh");
+const FALLBACK_AUTONOMY = "supervised";
+// Default workflow set when the host supplies no `enabledWorkflows`.
+// MUST stay identical to openclaw.plugin.json →
+// configSchema.properties.enabledWorkflows.default; the manifest is the
+// declared contract and tests/unit/test-openclaw-compat.sh asserts the two
+// lists match so they cannot drift apart again.
+const DEFAULT_ENABLED_WORKFLOWS = ["discover", "define", "develop", "deliver", "embrace", "debate", "review"];
+// --- Execution ---
+async function executeOrchestrate(config, command, prompt, flags = [], postFlags = []) {
+    const orchestrateSh = config.orchestrateShPath;
     // Global flags MUST come before the command; subcommand flags go after
     const args = [...flags, command, ...postFlags, prompt];
     try {
@@ -88,7 +96,7 @@ const WORKFLOW_DEFS = [
         parameters: Type.Object({
             prompt: Type.String({ description: "Topic to research" }),
         }),
-        run: async (params) => executeOrchestrate("probe", params.prompt),
+        run: async (params, config) => executeOrchestrate(config, "probe", params.prompt),
     },
     {
         name: "octopus_define",
@@ -97,7 +105,7 @@ const WORKFLOW_DEFS = [
         parameters: Type.Object({
             prompt: Type.String({ description: "Requirements or scope to define" }),
         }),
-        run: async (params) => executeOrchestrate("grasp", params.prompt),
+        run: async (params, config) => executeOrchestrate(config, "grasp", params.prompt),
     },
     {
         name: "octopus_develop",
@@ -107,10 +115,10 @@ const WORKFLOW_DEFS = [
             prompt: Type.String({ description: "What to implement" }),
             quality_threshold: Type.Optional(Type.Number({ description: "Minimum quality score (0-100)", default: 75 })),
         }),
-        run: async (params) => {
+        run: async (params, config) => {
             const qt = params.quality_threshold;
             const flags = qt !== undefined && qt !== 75 ? ["-q", `${qt}`] : [];
-            return executeOrchestrate("tangle", params.prompt, flags);
+            return executeOrchestrate(config, "tangle", params.prompt, flags);
         },
     },
     {
@@ -120,7 +128,7 @@ const WORKFLOW_DEFS = [
         parameters: Type.Object({
             prompt: Type.String({ description: "What to validate and deliver" }),
         }),
-        run: async (params) => executeOrchestrate("ink", params.prompt),
+        run: async (params, config) => executeOrchestrate(config, "ink", params.prompt),
     },
     {
         name: "octopus_embrace",
@@ -134,12 +142,12 @@ const WORKFLOW_DEFS = [
                 Type.Literal("autonomous"),
             ], { default: "supervised" })),
         }),
-        run: async (params) => {
-            const autonomy = params.autonomy ?? "supervised";
+        run: async (params, config) => {
+            const autonomy = params.autonomy ?? config.defaultAutonomy;
             if (!VALID_AUTONOMY.has(autonomy)) {
                 return `Error: invalid autonomy value '${autonomy}'. Allowed: supervised, semi-autonomous, autonomous`;
             }
-            return executeOrchestrate("embrace", params.prompt, [
+            return executeOrchestrate(config, "embrace", params.prompt, [
                 `--autonomy`, autonomy,
             ]);
         },
@@ -157,7 +165,7 @@ const WORKFLOW_DEFS = [
             ], { default: "cross-critique", description: "Evaluation mode: cross-critique (ACH falsification) or blinded (independent)" })),
         }),
         // orchestrate.sh grapple parses -r/--mode AFTER the subcommand, not as global flags
-        run: async (params) => executeOrchestrate("grapple", params.question, [], [
+        run: async (params, config) => executeOrchestrate(config, "grapple", params.question, [], [
             "-r",
             `${params.rounds ?? 1}`,
             "--mode",
@@ -200,16 +208,16 @@ const WORKFLOW_DEFS = [
                 Type.Literal("off"),
             ], { description: "Whether to debate contested findings via multi-LLM gate (default: auto)" })),
         }),
-        run: async (params) => {
+        run: async (params, config) => {
             const profile = JSON.stringify({
                 target: params.target ?? "staged",
                 focus: params.focus ?? ["correctness"],
                 provenance: params.provenance ?? "unknown",
-                autonomy: params.autonomy ?? "supervised",
+                autonomy: params.autonomy ?? config.defaultAutonomy,
                 publish: params.publish ?? "ask",
                 debate: params.debate ?? "auto",
             });
-            return executeOrchestrate("code-review", profile);
+            return executeOrchestrate(config, "code-review", profile);
         },
     },
     {
@@ -219,25 +227,44 @@ const WORKFLOW_DEFS = [
         parameters: Type.Object({
             target: Type.String({ description: "File or directory to audit" }),
         }),
-        run: async (params) => executeOrchestrate("squeeze", params.target),
+        run: async (params, config) => executeOrchestrate(config, "squeeze", params.target),
     },
 ];
 // --- Extension Entry Point ---
 export default function register(api) {
     const pluginConfig = api.pluginConfig ?? {};
-    const enabledWorkflows = pluginConfig.enabledWorkflows ?? [
-        "discover",
-        "define",
-        "develop",
-        "deliver",
-        "embrace",
-        "debate",
-        "review",
-        "security",
-    ];
+    // `defaultAutonomy` — validated against the same set the tools enforce, so a
+    // bad host config degrades to "supervised" instead of failing every call.
+    const configuredAutonomy = pluginConfig.defaultAutonomy;
+    let defaultAutonomy = FALLBACK_AUTONOMY;
+    if (typeof configuredAutonomy === "string" && configuredAutonomy !== "") {
+        if (VALID_AUTONOMY.has(configuredAutonomy)) {
+            defaultAutonomy = configuredAutonomy;
+        }
+        else {
+            api.logger.warn(`Ignoring invalid defaultAutonomy '${configuredAutonomy}' — using '${FALLBACK_AUTONOMY}'. Allowed: ${[...VALID_AUTONOMY].join(", ")}`);
+        }
+    }
+    // `orchestrateShPath` — relative paths resolve against the plugin root so the
+    // documented default ("auto-detected from plugin installation") still holds.
+    const configuredPath = pluginConfig.orchestrateShPath;
+    const orchestrateShPath = typeof configuredPath === "string" && configuredPath.trim() !== ""
+        ? resolve(PLUGIN_ROOT, configuredPath.trim())
+        : resolve(PLUGIN_ROOT, "scripts/orchestrate.sh");
+    // `enabledWorkflows` — an empty array is treated as "unset" rather than
+    // "enable nothing": `??` alone only catches `undefined`, so a host that
+    // materializes the key as `[]` would otherwise register zero workflows.
+    const configuredWorkflows = pluginConfig.enabledWorkflows;
+    const enabledWorkflows = Array.isArray(configuredWorkflows) && configuredWorkflows.length > 0
+        ? configuredWorkflows
+        : DEFAULT_ENABLED_WORKFLOWS;
+    const config = { orchestrateShPath, defaultAutonomy };
     api.logger.info(`Kannaktopus OpenClaw extension loading...`);
     api.logger.info(`Plugin root: ${PLUGIN_ROOT}`);
+    api.logger.info(`orchestrate.sh: ${orchestrateShPath}`);
+    api.logger.info(`Default autonomy: ${defaultAutonomy}`);
     // Register workflow tools
+    let registered = 0;
     for (const def of WORKFLOW_DEFS) {
         const workflowName = def.name.replace("octopus_", "");
         if (enabledWorkflows.includes(workflowName)) {
@@ -246,10 +273,11 @@ export default function register(api) {
                 label: def.label,
                 description: def.description,
                 parameters: def.parameters,
-                execute: async (_toolCallId, params) => textResult(await def.run(params)),
+                execute: async (_toolCallId, params) => textResult(await def.run(params, config)),
             };
             api.registerTool(tool);
             api.logger.info(`Registered tool: ${def.name}`);
+            registered++;
         }
     }
     // Register introspection tool
@@ -266,6 +294,14 @@ export default function register(api) {
             return textResult(text);
         },
     });
-    api.logger.info(`Kannaktopus extension loaded: ${enabledWorkflows.length} workflows registered.`);
+    // Register status tool — parity with mcp-server/src/index.ts octopus_status
+    api.registerTool({
+        name: "octopus_status",
+        label: "Octopus Status",
+        description: "Check Kannaktopus provider availability and configuration status.",
+        parameters: Type.Object({}),
+        execute: async () => textResult(await executeOrchestrate(config, "status", "")),
+    });
+    api.logger.info(`Kannaktopus extension loaded: ${registered} workflows registered.`);
 }
 //# sourceMappingURL=index.js.map

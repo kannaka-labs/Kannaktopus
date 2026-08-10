@@ -22,11 +22,22 @@ export interface SkillMetadata {
 }
 
 /**
+ * Normalize CRLF (and lone CR) line endings to LF.
+ *
+ * Git checks skill Markdown out with CRLF on Windows (core.autocrlf=true),
+ * which would otherwise defeat every `\n`-anchored pattern below and make
+ * frontmatter parsing silently return nothing.
+ */
+function normalizeNewlines(content: string): string {
+  return content.replace(/\r\n?/g, "\n");
+}
+
+/**
  * Parse YAML-like frontmatter from a Markdown file.
  * Handles the simple key: value format used by Claude Code skills.
  */
 function parseFrontmatter(content: string): Record<string, string> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = normalizeNewlines(content).match(/^---\n([\s\S]*?)\n---/);
   if (!match) return {};
 
   const result: Record<string, string> = {};
@@ -72,7 +83,7 @@ function parseFrontmatter(content: string): Record<string, string> {
  * Handles both inline array and multi-line list formats.
  */
 function parseAliases(content: string): string[] {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = normalizeNewlines(content).match(/^---\n([\s\S]*?)\n---/);
   if (!match) return [];
 
   const aliasMatch = match[1].match(

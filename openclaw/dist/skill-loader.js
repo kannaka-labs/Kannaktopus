@@ -10,11 +10,21 @@
 import { readFile, readdir } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 /**
+ * Normalize CRLF (and lone CR) line endings to LF.
+ *
+ * Git checks skill Markdown out with CRLF on Windows (core.autocrlf=true),
+ * which would otherwise defeat every `\n`-anchored pattern below and make
+ * frontmatter parsing silently return nothing.
+ */
+function normalizeNewlines(content) {
+    return content.replace(/\r\n?/g, "\n");
+}
+/**
  * Parse YAML-like frontmatter from a Markdown file.
  * Handles the simple key: value format used by Claude Code skills.
  */
 function parseFrontmatter(content) {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    const match = normalizeNewlines(content).match(/^---\n([\s\S]*?)\n---/);
     if (!match)
         return {};
     const result = {};
@@ -56,7 +66,7 @@ function parseFrontmatter(content) {
  * Handles both inline array and multi-line list formats.
  */
 function parseAliases(content) {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    const match = normalizeNewlines(content).match(/^---\n([\s\S]*?)\n---/);
     if (!match)
         return [];
     const aliasMatch = match[1].match(/aliases:\s*\n((?:\s+-\s+.+\n?)*)/m);

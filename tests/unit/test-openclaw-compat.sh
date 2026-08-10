@@ -250,6 +250,57 @@ test_openclaw_correct_command_mapping() {
     fi
 }
 
+test_openclaw_introspection_tools() {
+    test_case "OpenClaw extension registers octopus_list_skills and octopus_status"
+    local src="$PROJECT_ROOT/openclaw/src/index.ts"
+    if [[ ! -f "$src" ]]; then
+        test_fail "openclaw/src/index.ts not found"
+        return
+    fi
+
+    local missing=""
+    for tool in octopus_list_skills octopus_status; do
+        if ! grep -q "name: \"$tool\"" "$src"; then
+            missing="$missing $tool"
+        fi
+    done
+
+    if [[ -z "$missing" ]]; then
+        test_pass
+    else
+        test_fail "Introspection tools not registered in OpenClaw extension:$missing"
+    fi
+}
+
+test_openclaw_default_workflows_match_manifest() {
+    test_case "Runtime default workflow set matches openclaw.plugin.json"
+    local manifest="$PROJECT_ROOT/openclaw/openclaw.plugin.json"
+    local src="$PROJECT_ROOT/openclaw/src/index.ts"
+
+    if [[ ! -f "$manifest" ]] || [[ ! -f "$src" ]]; then
+        test_fail "openclaw.plugin.json or openclaw/src/index.ts not found"
+        return
+    fi
+
+    local output exit_code
+    output=$(python3 -c '
+import json, re, sys
+declared = json.load(open(sys.argv[1], encoding="utf-8"))["configSchema"]["properties"]["enabledWorkflows"]["default"]
+match = re.search(r"DEFAULT_ENABLED_WORKFLOWS\s*=\s*(\[[^\]]*\])", open(sys.argv[2], encoding="utf-8").read())
+if not match:
+    sys.exit("DEFAULT_ENABLED_WORKFLOWS not found in openclaw/src/index.ts")
+runtime = json.loads(match.group(1))
+if runtime != declared:
+    sys.exit("runtime %s != manifest %s" % (runtime, declared))
+' "$manifest" "$src" 2>&1) && exit_code=0 || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        test_pass
+    else
+        test_fail "Default workflow set drifted from the manifest: $output"
+    fi
+}
+
 test_openclaw_flags_before_command() {
     test_case "OpenClaw extension passes flags before command"
     local src="$PROJECT_ROOT/openclaw/src/index.ts"
@@ -323,6 +374,80 @@ test_build_check_mode() {
     else
         test_fail "build-openclaw.sh --check failed (registry out of sync): $output"
     fi
+}
+
+test_build_script_handles_crlf_frontmatter() {
+    test_case "build-openclaw.sh parses CRLF frontmatter (Windows checkouts)"
+    local tmpdir
+    tmpdir=$(mktemp -d) || { test_fail "could not create temp dir"; return; }
+    mkdir -p "$tmpdir/skills" "$tmpdir/commands" "$tmpdir/out"
+
+    # A skill whose frontmatter uses CRLF, as Git checks it out when
+    # core.autocrlf=true. The filename deliberately differs from the declared
+    # name so a parse failure shows up as the filename fallback.
+    printf -- '---\r\nname: crlf-probe\r\ndescription: CRLF probe skill\r\n---\r\n\r\nBody\r\n' \
+        > "$tmpdir/skills/zz-fixture.md"
+
+    local output
+    output=$(SKILLS_DIR="$tmpdir/skills" COMMANDS_DIR="$tmpdir/commands" \
+        OUTPUT_DIR="$tmpdir/out" "$PROJECT_ROOT/scripts/build-openclaw.sh" 2>&1)
+
+    if grep -q 'name: "crlf-probe", description: "CRLF probe skill"' "$tmpdir/out/index.ts" 2>/dev/null; then
+        test_pass
+    else
+        test_fail "CRLF frontmatter not parsed: $(cat "$tmpdir/out/index.ts" 2>/dev/null) | $output"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+test_skill_loader_handles_crlf_frontmatter() {
+    test_case "Skill loader parses CRLF frontmatter (Windows checkouts)"
+    local loader="$PROJECT_ROOT/openclaw/dist/skill-loader.js"
+
+    if ! command -v node >/dev/null 2>&1; then
+        test_skip "node not available"
+        return
+    fi
+    if [[ ! -f "$loader" ]]; then
+        test_fail "openclaw/dist/skill-loader.js not found (run: cd openclaw && npm run build)"
+        return
+    fi
+
+    local tmpdir
+    tmpdir=$(mktemp -d) || { test_fail "could not create temp dir"; return; }
+    mkdir -p "$tmpdir/.claude/skills"
+    printf -- '---\r\nname: crlf-probe\r\ndescription: CRLF probe skill\r\n---\r\n\r\nBody\r\n' \
+        > "$tmpdir/.claude/skills/zz-fixture.md"
+
+    cat > "$tmpdir/probe.mjs" <<'PROBE'
+import { pathToFileURL } from "node:url";
+
+const [loaderPath, pluginRoot] = process.argv.slice(2);
+const { loadSkills } = await import(pathToFileURL(loaderPath).href);
+const skills = await loadSkills(pluginRoot);
+const probe = skills.find((s) => s.name === "crlf-probe");
+
+if (!probe) {
+  console.error(`crlf-probe skill was dropped; loaded: ${JSON.stringify(skills)}`);
+  process.exit(1);
+}
+if (probe.description !== "CRLF probe skill") {
+  console.error(`wrong description: ${probe.description}`);
+  process.exit(1);
+}
+PROBE
+
+    local output exit_code
+    output=$(node "$tmpdir/probe.mjs" "$loader" "$tmpdir" 2>&1) && exit_code=0 || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        test_pass
+    else
+        test_fail "Skill loader dropped a CRLF skill: $output"
+    fi
+
+    rm -rf "$tmpdir"
 }
 
 test_skill_loader_parses_frontmatter() {
@@ -481,6 +606,8 @@ test_openclaw_package_json
 test_openclaw_extensions_field
 test_openclaw_plugin_json
 test_openclaw_correct_command_mapping
+test_openclaw_introspection_tools
+test_openclaw_default_workflows_match_manifest
 test_openclaw_flags_before_command
 
 # Build Tooling
@@ -489,6 +616,8 @@ test_registry_generated
 test_registry_contains_skills_and_commands
 test_registry_count_matches
 test_build_check_mode
+test_build_script_handles_crlf_frontmatter
+test_skill_loader_handles_crlf_frontmatter
 test_skill_loader_parses_frontmatter
 
 # TypeScript Config
