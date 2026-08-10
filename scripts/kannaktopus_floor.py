@@ -54,8 +54,35 @@ JOIN_PAYLOAD = json.dumps({
 })
 
 
-async def _stay_joined() -> None:
-    """One connection. Re-enters on disconnect via outer loop."""
+async def _pump(ws) -> None:
+    """Drain server messages so the WS doesn't backpressure-close.
+
+    We don't care what the radio says — just stay connected so our
+    presence keeps the agents counter at >=1. Print floor_welcome
+    for visibility on first connect, otherwise stay quiet.
+    """
+    async for raw in ws:
+        try:
+            msg = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        mtype = msg.get("type", "")
+        if mtype == "floor_welcome":
+            d = msg.get("data", {})
+            log.info("floor_welcome id=%s kind=%s", d.get("id"), d.get("kind"))
+        elif log.isEnabledFor(logging.DEBUG):
+            log.debug("recv %s", mtype)
+
+
+async def _stay_joined(stop: asyncio.Event) -> None:
+    """One connection. Re-enters on disconnect via outer loop.
+
+    The message pump is raced against ``stop`` rather than awaited on its
+    own: ``async for raw in ws`` blocks for as long as the socket is
+    healthy, so a SIGTERM arriving mid-connection used to go unobserved
+    until the radio happened to disconnect us. systemd's default
+    TimeoutStopSec (90s) would elapse and escalate to SIGKILL.
+    """
     log.info("connecting WebSocket to %s", WS_URL)
     async with websockets.connect(
         WS_URL,
@@ -66,21 +93,26 @@ async def _stay_joined() -> None:
         await ws.send(JOIN_PAYLOAD)
         log.info("sent floor_join id=%s kind=agent", ARM_ID)
 
-        # Drain server messages so the WS doesn't backpressure-close.
-        # We don't care what the radio says — just stay connected so our
-        # presence keeps the agents counter at >=1. Print floor_welcome
-        # for visibility on first connect, otherwise stay quiet.
-        async for raw in ws:
-            try:
-                msg = json.loads(raw)
-            except (ValueError, TypeError):
-                continue
-            mtype = msg.get("type", "")
-            if mtype == "floor_welcome":
-                d = msg.get("data", {})
-                log.info("floor_welcome id=%s kind=%s", d.get("id"), d.get("kind"))
-            elif log.isEnabledFor(logging.DEBUG):
-                log.debug("recv %s", mtype)
+        pump = asyncio.ensure_future(_pump(ws))
+        waiter = asyncio.ensure_future(stop.wait())
+        try:
+            await asyncio.wait({pump, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (pump, waiter):
+                task.cancel()
+            # Collect both so a cancelled/failed task never warns as
+            # "exception was never retrieved".
+            await asyncio.gather(pump, waiter, return_exceptions=True)
+
+        if stop.is_set():
+            log.info("stop requested; closing WebSocket")
+            await ws.close()
+            return
+
+        # The pump finished first — re-raise whatever ended it (a
+        # ConnectionClosed, or nothing at all on a clean server-side end)
+        # so run()'s reconnect/backoff logic sees it.
+        pump.result()
 
 
 async def run() -> int:
@@ -102,13 +134,15 @@ async def run() -> int:
     delay = 1.0
     while not stop.is_set():
         try:
-            await _stay_joined()
+            await _stay_joined(stop)
             # If the connection ended cleanly, fall through and reconnect.
             delay = 1.0
         except (ConnectionClosed, OSError) as exc:
             log.warning("WS dropped (%s); reconnecting in %.1fs", exc, delay)
         except Exception:  # noqa: BLE001
             log.exception("unexpected error; reconnecting in %.1fs", delay)
+        if stop.is_set():
+            break
         try:
             await asyncio.wait_for(stop.wait(), timeout=delay)
         except asyncio.TimeoutError:

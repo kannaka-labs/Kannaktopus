@@ -62,7 +62,7 @@ standard request-reply pattern). Both shapes are valid:
 | `cmd`           | Args                                          | Result                                                                                       |
 | --------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `ping`          | none                                          | `{pong: true, arm_id, ts}` — liveness probe.                                                 |
-| `status`        | none                                          | `{arm_id, mcp_listen_port, orchestrate_available, kannaka_bin_available, platform}`.         |
+| `status`        | none                                          | `{arm_id, mcp_listen_port, orchestrate_path, orchestrate_available, kannaka_bin_available, platform}`. `mcp_listen_port` is the port the MCP HTTP server actually binds (`HTTP_PORT`, or an explicit `KANNAKTOPUS_MCP_PORT` override) and is `null` when no HTTP listener is configured — clients must handle null. `orchestrate_path` is the resolved absolute path, or `null`. |
 | `capabilities`  | none                                          | `{capabilities: [...], skills: [...]}` — for rendering quick-action buttons.                 |
 | `version`       | none                                          | `{kannaktopus, python, nats_py}`.                                                            |
 | `wake`          | `{[reason]}`                                  | `{awake: true, arm_id, ts, status: {…}}` — wake-from-idle handshake for the Console; pairs with `KANNAKTOPUS_WAKE_URL`. Always succeeds (Kannaktopus is always-on while systemd is enabled). |
