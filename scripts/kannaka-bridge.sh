@@ -10,6 +10,16 @@ KANNAKA_BIN="${KANNAKA_BIN:-kannaka}"
 KANNAKA_DATA_DIR="${KANNAKA_DATA_DIR:-~/.kannaka}"
 KANNAKA_TIMEOUT=10  # seconds — reasonable timeout for HRM operations
 
+# Resolve a timeout wrapper once: GNU coreutils ships `timeout`, Homebrew's
+# coreutils ships it as `gtimeout`. Empty when neither exists, in which case
+# calls run unwrapped rather than failing.
+KANNAKA_TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+    KANNAKA_TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    KANNAKA_TIMEOUT_CMD="gtimeout"
+fi
+
 # Check if Kannaka HRM binary is available
 # Returns 0 if available, 1 otherwise
 kannaka_available() {
@@ -33,9 +43,21 @@ kannaka_exec() {
         echo ""
         return 1
     fi
-    
-    # Run directly for now (Windows binary compatibility)
-    "$KANNAKA_BIN" "$@" 2>/dev/null || echo ""
+
+    local -a cmd=()
+    if [[ -n "$KANNAKA_TIMEOUT_CMD" ]]; then
+        cmd+=("$KANNAKA_TIMEOUT_CMD" "$KANNAKA_TIMEOUT")
+    fi
+    cmd+=("$KANNAKA_BIN" "$@")
+
+    # `|| echo ""` keeps every failure non-fatal under `set -e`, including a
+    # timeout kill (exit 124). That silence also hides real errors, so set
+    # KANNAKA_DEBUG to let the binary's stderr through.
+    if [[ -n "${KANNAKA_DEBUG:-}" ]]; then
+        "${cmd[@]}" || echo ""
+    else
+        "${cmd[@]}" 2>/dev/null || echo ""
+    fi
 }
 
 # Search HRM for memories by resonance query
@@ -54,16 +76,20 @@ kannaka_absorb() {
     local text="$1"
     local importance="${2:-0.5}"
     local category="${3:-general}"
-    shift 3
-    local tags=("$@")
-    
+    # Trailing args are tags. A slice tolerates the documented default-argument
+    # calls; `shift 3` failed on them and aborted the function under `set -e`.
+    local tags=("${@:4}")
+
     local args=("remember" "$text" "--importance" "$importance" "--category" "$category")
-    
-    # Add tags if provided
-    for tag in "${tags[@]}"; do
-        args+=("--tag" "$tag")
-    done
-    
+
+    # The CLI takes one comma-joined --tags; repeated --tag is rejected outright
+    # (exit 2), which silently dropped the whole write.
+    if [[ ${#tags[@]} -gt 0 ]]; then
+        local joined
+        joined=$(IFS=,; echo "${tags[*]}")
+        args+=("--tags" "$joined")
+    fi
+
     kannaka_exec "${args[@]}"
 }
 
@@ -115,7 +141,13 @@ kannaka_context() {
     echo "$results" | head -20  # Limit output size
 }
 
-# Main dispatch
+# Main dispatch — only when executed directly. The session hooks source this
+# file for its functions; running the dispatcher there matched the usage branch
+# and its `exit 1` killed the hook before any memory I/O.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
 case "${1:-}" in
     available)
         kannaka_available && echo "true" || echo "false"
