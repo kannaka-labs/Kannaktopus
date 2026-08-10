@@ -155,7 +155,7 @@ Skills for system design, task management, and project structure.
 
 ## ClawHub
 
-Published to: https://clawhub.ai/NickFlach/kannaka-memory
+Published to: https://clawhub.ai/NickFlach/kannaka
 
 Install Kannaktopus:
 ```bash

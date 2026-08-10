@@ -50,7 +50,9 @@ except ImportError:
 
 log = logging.getLogger("kannaktopus.presence")
 
-NATS_URL = os.environ.get("NATS_URL", "nats://swarm.ninja-portal.com:4222")
+NATS_URL = os.environ.get("NATS_URL") or os.environ.get(
+    "KANNAKA_NATS_URL", "nats://swarm.ninja-portal.com:4222"
+)
 ARM_ID = os.environ.get("KANNAKTOPUS_ARM_ID", "kannaktopus-01")
 DISPLAY_NAME = os.environ.get("KANNAKTOPUS_DISPLAY_NAME", "Kannaktopus")
 

@@ -39,11 +39,39 @@ The public bus is read-only-ish: no auth is required to **publish** join
 events for your own arm id, but the constellation operators reserve the
 right to drop noisy publishers. Keep the interval ≥ 30s.
 
+### Credentials
+
+Once the bus tightens its anon ACL, `queen.event.*` and `QUEEN.phase.*`
+publishes from an unauthenticated client are **rejected silently** — no
+error, no log line, the arm simply never appears. Set `NATS_USER` and
+`NATS_PASSWORD` (or, for the `nats` CLI path, `NATS_CREDS=/path/to.creds`)
+to authenticate.
+
+On a systemd host, put them in `/etc/kannaktopus/nats.env`:
+
+```bash
+sudo install -d -m 0700 /etc/kannaktopus
+sudo tee /etc/kannaktopus/nats.env >/dev/null <<'EOF'
+NATS_USER=kannaka_internal
+NATS_PASSWORD=...
+EOF
+sudo chmod 0600 /etc/kannaktopus/nats.env
+```
+
+then uncomment the `EnvironmentFile=/etc/kannaktopus/nats.env` hook in
+`scripts/systemd/kannaktopus-presence.service` (the listener unit carries
+the same hook). systemd reads the file as root before dropping to the
+`kannaktopus` user, so `0600 root:root` is both sufficient and correct.
+Never commit that file.
+
 ## Configuration
 
 | Env var                          | Default                                  | Effect                                                     |
 | -------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
-| `NATS_URL`                       | `nats://swarm.ninja-portal.com:4222`     | Override to point at a private bus during dev.             |
+| `NATS_URL`                       | `nats://swarm.ninja-portal.com:4222`     | Override to point at a private bus during dev. Wins over `KANNAKA_NATS_URL`. |
+| `KANNAKA_NATS_URL`               | *(unset)*                                | Constellation-wide bus URL, honoured when `NATS_URL` is unset or empty. |
+| `NATS_USER` / `NATS_PASSWORD`    | *(unset)*                                | Bus credentials. Both must be set; otherwise every publish goes out anon. |
+| `NATS_CREDS`                     | *(unset)*                                | Path to an nkey/JWT credentials file. Used by the `nats` CLI path (`nats-publish.sh`) and preferred over user/password. |
 | `KANNAKTOPUS_ARM_ID`             | `kannaktopus-01`                         | Becomes the agent key in `swarm.agents` and the QueenSync arm row. Use `kannaka-prime` to take over the existing seeded card. |
 | `KANNAKTOPUS_DISPLAY_NAME`       | `Kannaktopus`                            | Label rendered in the Queen Console.                       |
 | `KANNAKTOPUS_PRESENCE_SECONDS`   | `30`                                     | Beacon interval. Values below `10` are clamped to `10`; non-numeric values fall back to `30`. |

@@ -24,6 +24,11 @@ Environment=NATS_URL=nats://swarm.ninja-portal.com:4222
 Environment=KANNAKTOPUS_ARM_ID=kannaktopus-01
 Environment=KANNAKTOPUS_DISPLAY_NAME=Kannaktopus
 Environment=KANNAKTOPUS_PRESENCE_SECONDS=30
+# To authenticate as kannaka_internal (required if the bus tightens its
+# anon ACL — unauthenticated queen.event.* publishes are dropped silently),
+# drop NATS_USER= / NATS_PASSWORD= in /etc/kannaktopus/nats.env and add
+# EnvironmentFile=/etc/kannaktopus/nats.env above. Keep that file
+# root-owned 0600 and OUT of version control.
 
 # Lock the daemon down — it only needs outbound network.
 NoNewPrivileges=true
