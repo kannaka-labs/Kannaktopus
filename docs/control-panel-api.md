@@ -27,9 +27,9 @@ which covers the read-side (how Kannaktopus shows up on the observatory).
 | Subject                              | Purpose                                              | Anon publish? |
 | ------------------------------------ | ---------------------------------------------------- | ------------- |
 | `KANNAKA.ask.<arm_id>`               | **Recommended** for the Replit Console — anon-publishable per the bus's ADR-0026 ACL. | ✅            |
-| `KANNAKA.ask.broadcast`              | Anon-publishable fan-out to every arm.               | ✅            |
+| `KANNAKA.ask.broadcast`              | Anon-publishable fan-out to every arm. **Every** arm replies — collect them, don't `nc.request()`; see [Broadcast](#broadcast-collecting-every-arms-reply). | ✅            |
 | `KANNAKTOPUS.command.<arm_id>`       | Internal / authenticated — same handlers, kannaka_internal-only publish. | ❌            |
-| `KANNAKTOPUS.command.broadcast`      | Internal / authenticated fan-out.                    | ❌            |
+| `KANNAKTOPUS.command.broadcast`      | Internal / authenticated fan-out. Same collection pattern as above. | ❌            |
 
 The Replit control panel should use the `KANNAKA.ask.*` subjects so it
 can connect to the bus without holding `kannaka_internal` credentials —
@@ -50,12 +50,29 @@ identically; no per-subject behavior differences.
 ### Reply schema
 
 The listener replies on whatever NATS reply inbox the request carried (the
-standard request-reply pattern). Both shapes are valid:
+standard request-reply pattern). Every reply carries the canonical
+constellation envelope — `schema_version`, `ts`, `agent_id` — the same one
+`queensync_presence.py` publishes. Both shapes are valid:
 
 ```json
-{ "ok": true,  "result": { "...": "..." } }
-{ "ok": false, "error": "<message>" }
+{ "schema_version": "1.0", "ts": 1786399670083, "agent_id": "kannaktopus-01",
+  "ok": true,  "result": { "...": "..." } }
+
+{ "schema_version": "1.0", "ts": 1786399670084, "agent_id": "kannaktopus-01",
+  "ok": false, "error": "<message>" }
 ```
+
+| Field            | Type              | Notes                                                        |
+| ---------------- | ----------------- | ------------------------------------------------------------ |
+| `schema_version` | string            | Spec version string, currently `"1.0"` — not a bare `"1"`.   |
+| `ts`             | integer           | Unix **milliseconds**, not seconds and not ISO-8601.          |
+| `agent_id`       | string            | The replying arm's `KANNAKTOPUS_ARM_ID`.                      |
+
+The envelope is on **every** reply, including the `unknown_command` and
+`json_decode` errors — there is no reply shape that arrives unattributed.
+
+`agent_id` is what makes broadcast replies usable: see
+[Broadcast: collecting every arm's reply](#broadcast-collecting-every-arms-reply).
 
 ### Supported commands
 
@@ -63,10 +80,10 @@ standard request-reply pattern). Both shapes are valid:
 | --------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `ping`          | none                                          | `{pong: true, arm_id, ts}` — liveness probe.                                                 |
 | `status`        | none                                          | `{arm_id, mcp_listen_port, orchestrate_path, orchestrate_available, kannaka_bin_available, platform}`. `mcp_listen_port` is the port the MCP HTTP server actually binds (`HTTP_PORT`, or an explicit `KANNAKTOPUS_MCP_PORT` override) and is `null` when no HTTP listener is configured — clients must handle null. `orchestrate_path` is the resolved absolute path, or `null`. |
-| `capabilities`  | none                                          | `{capabilities: [...], skills: [...]}` — for rendering quick-action buttons.                 |
+| `capabilities`  | none                                          | `{capabilities: [...], skills: [...]}` — for rendering quick-action buttons. `skills` is discovered from `skills/<dir>/SKILL.md` and identified by the **frontmatter `name`**, never the directory basename; a skill whose frontmatter has no `name` is skipped rather than guessed at. The result is cached and re-read only when a `SKILL.md` mtime changes. |
 | `version`       | none                                          | `{kannaktopus, python, nats_py}`.                                                            |
 | `wake`          | `{[reason]}`                                  | `{awake: true, arm_id, ts, status: {…}}` — wake-from-idle handshake for the Console; pairs with `KANNAKTOPUS_WAKE_URL`. Always succeeds (Kannaktopus is always-on while systemd is enabled). |
-| `run`           | `{skill, prompt, [timeout_seconds]}`          | **RESERVED** — returns `{implemented: false}` today; will spawn `orchestrate.sh` when shipped. |
+| `run`           | `{skill, prompt, [timeout_seconds]}`          | **RESERVED / deliberately deferred** ([#32](https://github.com/NickFlach/Kannaktopus/issues/32)) — returns `{implemented: false, status: "deferred", tracking_issue, note}`. Not an unfinished stub: executing skills from this handler table would expose remote code execution over the anon-publishable `KANNAKA.ask.broadcast` subject, so the bus ACLs, an invocable-command allowlist, timeouts and bounded output capture have to be settled first. |
 
 Unknown commands reply with `{ok: false, error: "unknown_command: ...", supported: [...]}`.
 
@@ -78,10 +95,15 @@ Using the `nats` CLI to mock what the panel will do:
 nats --server nats://swarm.ninja-portal.com:4222 \
   req KANNAKTOPUS.command.kannaktopus-01 \
   '{"cmd":"ping"}'
-# {"ok": true, "result": {"pong": true, "arm_id": "kannaktopus-01", "ts": 1746432000.123}}
+# {"schema_version": "1.0", "ts": 1746432000123, "agent_id": "kannaktopus-01",
+#  "ok": true, "result": {"pong": true, "arm_id": "kannaktopus-01", "ts": 1746432000.123}}
 ```
 
-From a Node client:
+## Addressing one arm: `nc.request()`
+
+The **direct** subjects (`KANNAKA.ask.<arm_id>`,
+`KANNAKTOPUS.command.<arm_id>`) have exactly one responder, so plain
+request/reply is the right pattern and nothing about it has changed:
 
 ```ts
 import { connect, JSONCodec } from "nats";
@@ -94,15 +116,118 @@ const reply = await nc.request(
   codec.encode({ cmd: "status" }),
   { timeout: 5000 },
 );
-console.log(codec.decode(reply.data));
+console.log(codec.decode(reply.data)); // { schema_version, ts, agent_id, ok, result }
 ```
+
+## Broadcast: collecting every arm's reply
+
+**Do not use `nc.request()` on the `*.broadcast` subjects.** Request/reply is
+structurally single-response: NATS delivers your request to every subscribed
+arm and every arm replies into your inbox, but `nc.request()` resolves with
+the first reply and discards the rest. On a bus with N arms you observe 1
+reply and silently lose N−1.
+
+Use scatter-gather instead — subscribe to your own inbox, publish with that
+inbox as the reply subject, and collect until a deadline. This needs no extra
+bus grants: anonymous clients may already publish on `KANNAKA.ask.>` and
+subscribe on `_INBOX.>`, which is exactly what this pattern uses.
+
+```ts
+import { connect, JSONCodec, createInbox } from "nats";
+
+const nc = await connect({ servers: "nats://swarm.ninja-portal.com:4222" });
+const codec = JSONCodec();
+
+async function scatterGather(subject, payload, windowMs = 2000) {
+  const inbox = createInbox();               // "_INBOX.<random>"
+  const sub = nc.subscribe(inbox);
+  nc.publish(subject, codec.encode(payload), { reply: inbox });
+
+  const byArm = new Map();
+  const deadline = Date.now() + windowMs;
+  (async () => {
+    for await (const m of sub) {
+      const reply = codec.decode(m.data);
+      byArm.set(reply.agent_id, reply);       // agent_id is what disambiguates
+      if (Date.now() >= deadline) break;
+    }
+  })();
+
+  await new Promise((r) => setTimeout(r, windowMs));
+  sub.unsubscribe();
+  return [...byArm.values()];
+}
+
+const replies = await scatterGather("KANNAKA.ask.broadcast", { cmd: "status" });
+console.log(`${replies.length} arms answered:`, replies.map((r) => r.agent_id));
+```
+
+Notes for implementers:
+
+- **`agent_id` is the correlation key.** All replies land in one inbox; the
+  envelope's `agent_id` is what makes them individually observable. Key
+  results by it (as above) so a duplicate reply from one arm cannot be
+  mistaken for a second arm.
+- **A broadcast result is inherently partial.** There is no arm census on the
+  bus, so "how many *should* have answered" is not knowable from the client.
+  Render what came back within the window and say how many that was — do not
+  present it as a complete fleet view. For aggregate cross-arm state, the
+  observatory is the right surface; it already aggregates.
+- **Pick the window from the slowest command you send.** `ping` and
+  `capabilities` are local and fast; a 1–2 s window is generous.
+- **Late replies are discarded**, not applied, because the subscription is
+  torn down at the deadline. If you need to match late arrivals rather than
+  drop them, add your own `correlation_id` to the request `args` — the
+  listener echoes `args` back only for `run` today, so treat cross-request
+  correlation as client-side state keyed on the inbox you created.
 
 ## Authentication
 
-**Listener side** (Kannaktopus): authenticates as `kannaka_internal` via
-`NATS_USER` + `NATS_PASSWORD` env vars so it can subscribe to the
-`KANNAKTOPUS.command.>` subjects (those are restricted to authenticated
-publishers, not subscribers — but `kannaka_internal` simplifies things).
+**Listener side** (Kannaktopus): authenticates as `kannaka_internal` so it
+can subscribe to the `KANNAKTOPUS.command.>` subjects. Credentials resolve in
+this order:
+
+1. `NATS_USER` + `NATS_PASSWORD` from the environment
+2. `NATS_CREDS` (path to an nkey/JWT credentials file) from the environment
+3. the same keys parsed out of **`~/.kannaka-nats.env`** — the file the
+   constellation crons and systemd launchers already source. `export `
+   prefixes, quotes and `#` comments are tolerated; values are never logged.
+   Override the path with `KANNAKTOPUS_CREDS_FILE`.
+
+**The listener fails closed.** If nothing resolves and the subject set
+includes the authenticated-only `KANNAKTOPUS.command.*` subjects, it exits
+non-zero **before connecting**, naming the expected credentials path — rather
+than joining anonymously and going silently deaf on every command subject it
+was deployed to serve:
+
+```
+$ python scripts/kannaktopus_listener.py
+kannaktopus_listener: refusing to start — no NATS credentials resolved, but the
+subject set includes KANNAKTOPUS.command.* which the constellation bus restricts
+to authenticated users. ...
+  Expected credentials file: /home/opc/.kannaka-nats.env
+$ echo $?
+3
+```
+
+Operationally this means a host with missing credentials produces a systemd
+**restart loop** rather than a healthy-looking, half-deaf daemon. That is the
+intended trade — put the credentials in place (or an `EnvironmentFile=`, see
+`scripts/systemd/kannaktopus-listener.service`) before enabling the unit.
+
+**Anon-only listener** (the legitimate case): `KANNAKA.ask.>` is
+anon-publishable by design, so an operator may deliberately run a listener
+with no credentials. Opt in explicitly and it binds only the subjects it can
+actually serve:
+
+```bash
+python scripts/kannaktopus_listener.py --anon-only
+# or: KANNAKTOPUS_ANON_ONLY=1 python scripts/kannaktopus_listener.py
+# → subscribed to 2/2 subjects (KANNAKA.ask.<arm_id>, KANNAKA.ask.broadcast)
+```
+
+What no longer exists is the silent middle ground where the listener connects
+anonymously while still claiming the four-subject set.
 
 **Replit control panel side**: connect anonymously and use the
 `KANNAKA.ask.<arm_id>` subjects. No credentials required.
@@ -150,9 +275,14 @@ The `cmd` strings are stable. New commands are additive — old ones won't
 disappear without an explicit deprecation window. Args within a command
 may grow new optional fields; required fields will not change.
 
-The `run` command shape is **reserved** — its args may evolve before it
-ships. Treat any `run`-shaped contract as draft until `implemented: true`
-is in the reply.
+The `run` command shape is **reserved** and its implementation is a
+documented deferral, not an oversight ([#32](https://github.com/NickFlach/Kannaktopus/issues/32)).
+Its args may evolve before it ships. Treat any `run`-shaped contract as draft
+until `implemented: true` is in the reply.
+
+The reply envelope (`schema_version`, `ts`, `agent_id`) is additive to the
+`{ok, result}` / `{ok, error}` shapes that were there before — existing
+clients that read only `ok`/`result` keep working unchanged.
 
 ## Deployment
 
@@ -160,7 +290,12 @@ is in the reply.
 
 ```bash
 pip install nats-py
+
+# credentials must resolve first — see Authentication above
 python scripts/kannaktopus_listener.py
+
+# ...or, for an anon-only listener serving KANNAKA.ask.* only:
+python scripts/kannaktopus_listener.py --anon-only
 ```
 
 Or as a systemd service:
