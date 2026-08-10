@@ -3,7 +3,7 @@
   "name": "octo-claw",
   "displayName": "Kannaktopus",
   "version": "1.0.0",
-  "description": "Multi-agent orchestration with Double Diamond methodology. Brings 48 skills, expert code review, structured AI debates, and multi-provider workflows to OpenClaw.",
+  "description": "Multi-agent orchestration with Double Diamond methodology. Brings 8 workflow tools — discover, define, develop, deliver, embrace, debate, review, security — plus skill listing and status introspection to OpenClaw.",
   "category": "tools",
   "configSchema": {
     "type": "object",

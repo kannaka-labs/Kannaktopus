@@ -40,9 +40,6 @@ bash -n scripts/lib/*.sh
 bash tests/unit/test-openclaw-compat.sh
 bash tests/unit/test-adapter-flags.sh
 
-# Verify OpenClaw registry in sync
-scripts/build-openclaw.sh --check
-
 # Run full pre-push suite
 bash tests/run-pre-push.sh
 ```
