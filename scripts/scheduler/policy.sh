@@ -13,6 +13,12 @@ ALLOWED_WORKFLOWS="probe grasp tangle ink embrace squeeze grapple"
 # Flags that must never appear in scheduled jobs
 DENY_FLAGS="--dangerously-skip-permissions --no-verify --force-delete"
 
+# Emit a denial. Uses jq so reasons quoting user data (Windows paths carry
+# backslashes) stay valid JSON for the callers that parse this output.
+policy_deny() {
+    jq -nc --arg reason "$1" '{allowed: false, reason: $reason}'
+}
+
 # Check all policies for a job. Returns 0 if allowed, 1 if denied.
 # On denial, prints JSON reason to stdout.
 policy_check() {
@@ -91,21 +97,21 @@ policy_check_workspace() {
         return 1
     fi
 
-    # Block root path
-    if [[ "$workspace" == "/" ]]; then
-        echo '{"allowed":false,"reason":"Workspace cannot be root (/)"}'
+    # Block root path (POSIX / and Windows drive roots such as C:\)
+    if [[ "$workspace" == "/" ]] || [[ "$workspace" == [A-Za-z]:[/\\] ]]; then
+        policy_deny "Workspace cannot be a filesystem root: $workspace"
         return 1
     fi
 
-    # Must be absolute path
-    if [[ "$workspace" != /* ]]; then
+    # Must be absolute path: POSIX /path or Windows drive-qualified C:\path / C:/path
+    if [[ "$workspace" != /* ]] && [[ "$workspace" != [A-Za-z]:[/\\]* ]]; then
         echo '{"allowed":false,"reason":"Workspace must be an absolute path"}'
         return 1
     fi
 
     # Must exist
     if [[ ! -d "$workspace" ]]; then
-        echo "{\"allowed\":false,\"reason\":\"Workspace directory does not exist: $workspace\"}"
+        policy_deny "Workspace directory does not exist: $workspace"
         return 1
     fi
 

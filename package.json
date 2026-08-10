@@ -16,7 +16,7 @@
                     "test:coverage":  "make test-coverage",
                     "test:verbose":  "make test-verbose",
                     "test:clean":  "make clean-tests",
-                    "prepublishOnly":  "node -e \"const p=require('./package.json'); if(!/^\\d+\\.\\d+\\.\\d+$/.test(p.version)){process.exit(1)}\" && test -f scripts/orchestrate.sh && test -f README.md"
+                    "prepublishOnly":  "node -e \"const fs=require('fs'); const p=require('./package.json'); if(!/^\\d+\\.\\d+\\.\\d+$/.test(p.version)){process.exit(1)} for(const f of ['scripts/orchestrate.sh','README.md']){fs.accessSync(f)}\""
                 },
     "files":  [
                   "scripts/",
