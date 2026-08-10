@@ -82,6 +82,50 @@ cron_field_matches() {
     return 1
 }
 
+# Normalize weekday 7 (Sunday) to 0 in a cron weekday field expression.
+# Only weekday *values* are rewritten: the number after a "/" is a step count,
+# so "*/7" and the "/2" of "1-7/2" are left untouched.
+cron_normalize_wday() {
+    local field="$1"
+    local out=""
+    local parts
+    IFS=',' read -ra parts <<< "$field"
+    local part
+    for part in "${parts[@]}"; do
+        local base="$part"
+        local step=""
+        local step_val=1
+        if [[ "$part" == */* ]]; then
+            base="${part%/*}"
+            step="/${part##*/}"
+            step_val="${part##*/}"
+        fi
+
+        local extra=""
+        if [[ "$base" == *-* ]]; then
+            local range_start="${base%-*}"
+            local range_end="${base#*-}"
+            if [[ "$range_end" == "7" ]]; then
+                if [[ "$range_start" == "7" ]]; then
+                    base="0"
+                    step=""
+                else
+                    base="${range_start}-6"
+                    # Sunday is only reached if the step sequence actually lands on 7
+                    if (( step_val > 0 && range_start > 0 && (7 - range_start) % step_val == 0 )); then
+                        extra=",0"
+                    fi
+                fi
+            fi
+        elif [[ "$base" == "7" ]]; then
+            base="0"
+        fi
+
+        out="${out:+${out},}${base}${step}${extra}"
+    done
+    printf '%s' "$out"
+}
+
 # Check if a cron expression matches the given time
 # Args: cron_expr minute hour day month weekday
 # Returns: 0 if matches, 1 if not
@@ -116,6 +160,9 @@ cron_matches() {
     if (( weekday == 7 )); then
         weekday=0
     fi
+
+    # The expression may also use 7 for Sunday; fold it into the 0-6 domain
+    cron_wday="$(cron_normalize_wday "$cron_wday")"
 
     # Check each field
     cron_field_matches "$cron_min"   "$minute"  0 59 || return 1
