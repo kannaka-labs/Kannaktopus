@@ -1,11 +1,46 @@
 #!/usr/bin/env bash
 # validate-release.sh - Pre-release validation for kannaktopus
 # Prevents common release issues like version mismatches and missing registrations
+#
+# Read-only by default: it inspects and reports, and never changes git or GitHub
+# state. Tag creation, tag pushing, and GitHub release creation happen only with
+# --publish, so a plain validation run is always safe to repeat.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+
+PUBLISH=false
+
+usage() {
+    cat <<'EOF'
+Usage: validate-release.sh [--publish]
+
+  (no flags)  Validate only. Inspects plugin metadata, versions, registrations,
+              the CHANGELOG, the expected git tag and the GitHub release, and
+              reports what is missing or out of date. Makes no changes.
+
+  --publish   Additionally create/update the release tag, push it to origin, and
+              create the GitHub release from the CHANGELOG entry. Rewrites tags
+              and pushes with --force; only use this from a real release.
+
+  -h, --help  Show this message.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --publish) PUBLISH=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *)
+            echo "validate-release.sh: unknown argument '$1'" >&2
+            echo "" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,7 +65,7 @@ MARKETPLACE_PLUGIN_NAME=$(sed -n '/"plugins"/,/]/p' "$ROOT_DIR/.claude-plugin/ma
 if [[ "$PLUGIN_NAME" != "octo" ]]; then
     echo -e "  ${RED}CRITICAL ERROR: plugin.json name is '$PLUGIN_NAME' - MUST be 'octo'${NC}"
     echo -e "  ${RED}This controls command namespace (/octo:* commands)${NC}"
-    ((errors++))
+    errors=$((errors + 1))
 else
     echo -e "  ${GREEN}✓ plugin.json name: octo (command namespace)${NC}"
 fi
@@ -38,7 +73,7 @@ fi
 if [[ "$MARKETPLACE_PLUGIN_NAME" != "octo" ]]; then
     echo -e "  ${RED}CRITICAL ERROR: marketplace.json plugin name is '$MARKETPLACE_PLUGIN_NAME' - MUST be 'octo'${NC}"
     echo -e "  ${RED}This controls install command (octo@kannaka-plugins) and must match plugin.json name${NC}"
-    ((errors++))
+    errors=$((errors + 1))
 else
     echo -e "  ${GREEN}✓ marketplace.json plugin name: octo (matches plugin.json for /plugin UI)${NC}"
 fi
@@ -64,17 +99,17 @@ echo "  README badge:     $README_BADGE_VERSION"
 
 if [[ "$PLUGIN_VERSION" != "$MARKETPLACE_VERSION" ]]; then
     echo -e "  ${RED}ERROR: plugin.json ($PLUGIN_VERSION) != marketplace.json ($MARKETPLACE_VERSION)${NC}"
-    ((errors++))
+    errors=$((errors + 1))
 fi
 
 if [[ "$PLUGIN_VERSION" != "$PACKAGE_VERSION" ]]; then
     echo -e "  ${RED}ERROR: plugin.json ($PLUGIN_VERSION) != package.json ($PACKAGE_VERSION)${NC}"
-    ((errors++))
+    errors=$((errors + 1))
 fi
 
 if [[ "$PLUGIN_VERSION" != "$README_BADGE_VERSION" ]]; then
     echo -e "  ${YELLOW}WARNING: plugin.json ($PLUGIN_VERSION) != README badge ($README_BADGE_VERSION)${NC}"
-    ((warnings++))
+    warnings=$((warnings + 1))
 fi
 
 if [[ $errors -eq 0 ]] && [[ "$PLUGIN_VERSION" == "$MARKETPLACE_VERSION" ]] && [[ "$PLUGIN_VERSION" == "$PACKAGE_VERSION" ]]; then
@@ -93,18 +128,18 @@ if command -v claude >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓ Claude plugin validator passed${NC}"
     else
         echo -e "  ${RED}ERROR: claude plugin validate failed for plugin.json${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
 
     if claude plugin validate "$ROOT_DIR/.claude-plugin/marketplace.json"; then
         echo -e "  ${GREEN}✓ Marketplace manifest validator passed${NC}"
     else
         echo -e "  ${RED}ERROR: claude plugin validate failed for marketplace.json${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
 else
     echo -e "  ${YELLOW}WARNING: claude CLI not installed; skipping runtime plugin validation${NC}"
-    ((warnings++))
+    warnings=$((warnings + 1))
 fi
 
 echo ""
@@ -124,7 +159,7 @@ REGISTERED_COMMANDS=$(grep -o '\.claude/commands/[^"]*\.md' "$ROOT_DIR/.claude-p
 for cmd_file in $COMMAND_FILES; do
     if ! echo "$REGISTERED_COMMANDS" | grep -q "^${cmd_file}$"; then
         echo -e "  ${RED}ERROR: Command file '$cmd_file' not registered in plugin.json${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
 done
 
@@ -132,7 +167,7 @@ done
 for reg_cmd in $REGISTERED_COMMANDS; do
     if ! echo "$COMMAND_FILES" | grep -q "^${reg_cmd}$"; then
         echo -e "  ${RED}ERROR: Registered command '$reg_cmd' does not exist${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
 done
 
@@ -157,7 +192,7 @@ for cmd_file in "$ROOT_DIR/.claude/commands/"*.md; do
     if [[ -n "$cmd_name" ]] && [[ "$cmd_name" == *":"* ]]; then
         echo -e "  ${RED}ERROR: $(basename "$cmd_file") has 'command: $cmd_name' - must NOT include namespace prefix${NC}"
         echo -e "  ${RED}  Claude Code will automatically add '/octo:' prefix based on plugin name${NC}"
-        ((errors++))
+        errors=$((errors + 1))
         ((invalid_frontmatter++))
     fi
 done
@@ -183,20 +218,20 @@ for skill_dir in "$ROOT_DIR/skills/"*/; do
     [[ "$dir_name" == "blocks" ]] && continue
     if [[ ! -f "$skill_dir/SKILL.md" ]]; then
         echo -e "  ${RED}ERROR: skills/$dir_name/ has no SKILL.md (not discoverable)${NC}"
-        ((errors++))
+        errors=$((errors + 1))
         continue
     fi
     fm_name=$(grep -m1 '^name:' "$skill_dir/SKILL.md" | sed 's/^name: *//' | tr -d '\r')
     if [[ "$fm_name" != "$dir_name" ]]; then
         echo -e "  ${RED}ERROR: skills/$dir_name/SKILL.md frontmatter name is '$fm_name'${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
     skill_count=$((skill_count + 1))
 done
 
 if grep -q '"skills"' "$ROOT_DIR/.claude-plugin/plugin.json"; then
     echo -e "  ${RED}ERROR: plugin.json declares a skills array (must auto-discover)${NC}"
-    ((errors++))
+    errors=$((errors + 1))
 fi
 
 if [[ $errors -eq 0 ]]; then
@@ -221,7 +256,7 @@ for skill_file in "$ROOT_DIR/.claude/skills/"*.md; do
     if [[ "$skill_name" != "skill-"* ]] && [[ "$skill_name" != "flow-"* ]] && [[ "$skill_name" != "octopus-"* ]] && [[ "$skill_name" != "sys-"* ]]; then
         echo -e "  ${RED}ERROR: $(basename "$skill_file") has 'name: $skill_name' - must use descriptive prefix${NC}"
         echo -e "  ${RED}  Use: skill-, flow-, sys-, or octopus- prefix (NOT octo:)${NC}"
-        ((errors++))
+        errors=$((errors + 1))
         ((invalid_skill_names++))
     fi
 done
@@ -243,15 +278,27 @@ if echo "$MARKETPLACE_DESC" | grep -q "v$PLUGIN_VERSION"; then
     echo -e "  ${GREEN}✓ Marketplace description mentions v$PLUGIN_VERSION${NC}"
 else
     echo -e "  ${YELLOW}WARNING: Marketplace description may not mention current version v$PLUGIN_VERSION${NC}"
-    ((warnings++))
+    warnings=$((warnings + 1))
 fi
 
 echo ""
 
 # ============================================================================
-# 9. GIT TAG CHECK & AUTO-CREATE
+# 9. GIT TAG CHECK
 # ============================================================================
 echo "🔖 Checking git tag..."
+
+# Annotation for the release tag: the CHANGELOG entry for this version, falling
+# back to a bare message so `git tag -a -m` never gets an empty string.
+tag_message() {
+    local msg
+    msg=$(awk "/## \[$PLUGIN_VERSION\]/,/^## \[/" "$ROOT_DIR/CHANGELOG.md" | head -20 | tail -n +2)
+    if [[ -n "$msg" ]]; then
+        printf '%s\n' "$msg"
+    else
+        printf 'Release %s\n' "$EXPECTED_TAG"
+    fi
+}
 
 EXPECTED_TAG="v$PLUGIN_VERSION"
 if git tag -l "$EXPECTED_TAG" | grep -q "$EXPECTED_TAG"; then
@@ -264,34 +311,30 @@ if git tag -l "$EXPECTED_TAG" | grep -q "$EXPECTED_TAG"; then
         echo -e "  ${YELLOW}WARNING: Tag $EXPECTED_TAG exists but doesn't point to HEAD${NC}"
         echo -e "  ${YELLOW}  Tag points to: ${TAG_COMMIT:0:7}${NC}"
         echo -e "  ${YELLOW}  HEAD is:       ${HEAD_COMMIT:0:7}${NC}"
-        echo -e "  ${YELLOW}  Updating tag to point to current HEAD...${NC}"
+        warnings=$((warnings + 1))
 
-        # Delete old tag locally and remotely, create new one
-        git tag -d "$EXPECTED_TAG" >/dev/null 2>&1 || true
-        git push origin ":refs/tags/$EXPECTED_TAG" >/dev/null 2>&1 || true
+        if [[ "$PUBLISH" == true ]]; then
+            echo -e "  ${YELLOW}  Updating tag to point to current HEAD...${NC}"
 
-        # Extract CHANGELOG entry for tag message
-        TAG_MESSAGE=$(awk "/## \[$PLUGIN_VERSION\]/,/^## \[/" "$ROOT_DIR/CHANGELOG.md" | head -20 | tail -n +2)
-        if [[ -n "$TAG_MESSAGE" ]]; then
-            git tag -a "$EXPECTED_TAG" -m "$TAG_MESSAGE"
+            # Delete old tag locally and remotely, create new one
+            git tag -d "$EXPECTED_TAG" >/dev/null 2>&1 || true
+            git push origin ":refs/tags/$EXPECTED_TAG" >/dev/null 2>&1 || true
+
+            git tag -a "$EXPECTED_TAG" -m "$(tag_message)"
+            echo -e "  ${GREEN}✓ Tag $EXPECTED_TAG updated to point to HEAD${NC}"
         else
-            git tag -a "$EXPECTED_TAG" -m "Release $EXPECTED_TAG"
+            echo -e "  ${YELLOW}  Re-point it with: validate-release.sh --publish${NC}"
         fi
-        echo -e "  ${GREEN}✓ Tag $EXPECTED_TAG updated to point to HEAD${NC}"
-        ((warnings++))
     fi
 else
     echo -e "  ${YELLOW}NOTE: Tag $EXPECTED_TAG not yet created${NC}"
-    echo -e "  ${GREEN}  Auto-creating tag...${NC}"
+    warnings=$((warnings + 1))
 
-    # Extract CHANGELOG entry for tag message
-    TAG_MESSAGE=$(awk "/## \[$PLUGIN_VERSION\]/,/^## \[/" "$ROOT_DIR/CHANGELOG.md" | head -20 | tail -n +2)
-    if [[ -n "$TAG_MESSAGE" ]]; then
-        git tag -a "$EXPECTED_TAG" -m "$TAG_MESSAGE"
-        echo -e "  ${GREEN}✓ Tag $EXPECTED_TAG created with CHANGELOG excerpt${NC}"
-    else
-        git tag -a "$EXPECTED_TAG" -m "Release $EXPECTED_TAG"
+    if [[ "$PUBLISH" == true ]]; then
+        git tag -a "$EXPECTED_TAG" -m "$(tag_message)"
         echo -e "  ${GREEN}✓ Tag $EXPECTED_TAG created${NC}"
+    else
+        echo -e "  ${YELLOW}  Create it with: validate-release.sh --publish${NC}"
     fi
 fi
 
@@ -312,11 +355,11 @@ if [[ -f "$CHANGELOG_FILE" ]]; then
     else
         echo -e "  ${RED}ERROR: CHANGELOG.md missing entry for v$PLUGIN_VERSION${NC}"
         echo -e "  ${RED}  Add a changelog entry before releasing${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
 else
     echo -e "  ${YELLOW}WARNING: CHANGELOG.md not found${NC}"
-    ((warnings++))
+    warnings=$((warnings + 1))
 fi
 
 echo ""
@@ -347,27 +390,28 @@ else
             # Check if tag exists on remote
             REMOTE_TAG_SHA=$(git ls-remote origin "refs/tags/$EXPECTED_TAG" 2>/dev/null | cut -f1)
 
-            if [[ -n "$REMOTE_TAG_SHA" ]]; then
-                echo -e "  ${GREEN}  Auto-creating GitHub release from CHANGELOG...${NC}"
+            warnings=$((warnings + 1))
 
+            if [[ -n "$REMOTE_TAG_SHA" ]]; then
                 # Extract CHANGELOG entry for this version
                 RELEASE_NOTES=$(awk "/## \\[$PLUGIN_VERSION\\]/,/^---$/" "$ROOT_DIR/CHANGELOG.md" | sed '$d' | tail -n +3)
 
-                if [[ -n "$RELEASE_NOTES" ]]; then
+                if [[ -z "$RELEASE_NOTES" ]]; then
+                    echo -e "  ${YELLOW}WARNING: No CHANGELOG entry found for v$PLUGIN_VERSION${NC}"
+                    echo -e "  ${YELLOW}  Cannot create a release without release notes${NC}"
+                elif [[ "$PUBLISH" == true ]]; then
+                    echo -e "  ${GREEN}  Creating GitHub release from CHANGELOG...${NC}"
                     # Create release with CHANGELOG notes and mark as latest
                     if gh release create "$EXPECTED_TAG" --title "v$PLUGIN_VERSION" --notes "$RELEASE_NOTES" --latest >/dev/null 2>&1; then
                         echo -e "  ${GREEN}✓ GitHub release $EXPECTED_TAG created${NC}"
                     else
                         echo -e "  ${YELLOW}WARNING: Failed to create GitHub release${NC}"
-                        ((warnings++))
                     fi
                 else
-                    echo -e "  ${YELLOW}WARNING: No CHANGELOG entry found for v$PLUGIN_VERSION${NC}"
-                    echo -e "  ${YELLOW}  Cannot auto-create release without release notes${NC}"
-                    ((warnings++))
+                    echo -e "  ${YELLOW}  Create it with: validate-release.sh --publish${NC}"
                 fi
             else
-                echo -e "  ${YELLOW}  Tag not yet pushed to remote - will create release after push${NC}"
+                echo -e "  ${YELLOW}  Tag not yet pushed to remote${NC}"
             fi
         fi
     fi
@@ -380,6 +424,7 @@ echo ""
 # ============================================================================
 push_tag_if_needed() {
     local tag="$1"
+    [[ "$PUBLISH" == true ]] || return 0
     if git tag -l "$tag" | grep -q "$tag"; then
         REMOTE_TAG_SHA=$(git ls-remote origin "refs/tags/$tag" 2>/dev/null | cut -f1)
         LOCAL_TAG_SHA=$(git rev-list -n 1 "$tag" 2>/dev/null)
