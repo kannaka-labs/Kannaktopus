@@ -17,9 +17,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SKILLS_DIR="$PLUGIN_ROOT/.claude/skills"
-COMMANDS_DIR="$PLUGIN_ROOT/.claude/commands"
-OUTPUT_DIR="$PLUGIN_ROOT/openclaw/src/tools"
+# Overridable so tests can drive the real script against fixture directories
+SKILLS_DIR="${SKILLS_DIR:-$PLUGIN_ROOT/.claude/skills}"
+COMMANDS_DIR="${COMMANDS_DIR:-$PLUGIN_ROOT/.claude/commands}"
+OUTPUT_DIR="${OUTPUT_DIR:-$PLUGIN_ROOT/openclaw/src/tools}"
 CHECK_MODE=false
 
 if [[ "${1:-}" == "--check" ]]; then
@@ -43,6 +44,12 @@ extract_skills() {
         local description=""
 
         while IFS= read -r line; do
+            # Strip the trailing CR left by CRLF checkouts (Git for Windows
+            # defaults to core.autocrlf=true). Without this the "---" delimiter
+            # never matches, frontmatter is never entered, and every skill
+            # falls back to its filename with "No description".
+            line=${line%$'\r'}
+
             if [[ "$line" == "---" ]]; then
                 if $in_frontmatter; then
                     break
@@ -123,7 +130,9 @@ HEADER
     echo "export const REGISTRY_COUNT = ${count};" >> "$tmp_file"
 
     if $CHECK_MODE; then
-        if [[ -f "$registry_file" ]] && diff -q "$tmp_file" "$registry_file" > /dev/null 2>&1; then
+        # --strip-trailing-cr: the checked-out registry is CRLF on Windows while
+        # the freshly generated one is LF — compare content, not line endings.
+        if [[ -f "$registry_file" ]] && diff -q --strip-trailing-cr "$tmp_file" "$registry_file" > /dev/null 2>&1; then
             echo "OpenClaw registry is up to date (${count} entries)."
             rm "$tmp_file"
             return 0
@@ -131,7 +140,7 @@ HEADER
             echo "ERROR: OpenClaw registry is out of date. Run: ./scripts/build-openclaw.sh" >&2
             if [[ -f "$registry_file" ]]; then
                 echo "Diff:" >&2
-                diff -u "$registry_file" "$tmp_file" >&2 || true
+                diff -u --strip-trailing-cr "$registry_file" "$tmp_file" >&2 || true
             fi
             rm "$tmp_file"
             return 1

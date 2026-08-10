@@ -87,6 +87,7 @@ export const SKILL_REGISTRY = [
     { name: "model-config", description: "Configure AI provider models for Kannaktopus workflows", type: "command", file: "model-config.md" },
     { name: "multi", description: "Force multi-provider parallel execution for any task - manual override mode", type: "command", file: "multi.md" },
     { name: "octo", description: "[Legacy] Redirects to /octo:auto — the smart router", type: "command", file: "octo.md" },
+    { name: "optimize", description: "Analyze token usage patterns and optimize with RTK integration", type: "command", file: "optimize.md" },
     { name: "parallel", description: "Team of Teams - Decompose compound tasks across independent claude instances", type: "command", file: "parallel.md" },
     { name: "pipeline", description: "Run content analysis pipeline on URL(s) to extract patterns and create anatomy guides", type: "command", file: "pipeline.md" },
     { name: "plan", description: "Intelligent plan builder - creates strategic execution plans (doesn't execute). Use /octo:embrace to execute plans.", type: "command", file: "plan.md" },
@@ -107,5 +108,5 @@ export const SKILL_REGISTRY = [
     { name: "tdd", description: "Test-driven development with red-green-refactor discipline", type: "command", file: "tdd.md" },
     { name: "unfreeze", description: "Remove freeze mode edit restriction", type: "command", file: "unfreeze.md" },
 ];
-export const REGISTRY_COUNT = 99;
+export const REGISTRY_COUNT = 100;
 //# sourceMappingURL=index.js.map
