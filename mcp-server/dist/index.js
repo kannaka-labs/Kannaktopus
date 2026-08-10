@@ -57,6 +57,14 @@ function resolveKannakaDataDir() {
     return process.env.KANNAKA_DATA_DIR || resolve(resolveHomeDir(), ".kannaka");
 }
 /**
+ * Root of the kannaka-memory checkout that backs the /api/experiments/*
+ * endpoints. Honours KANNAKA_MEMORY_ROOT, otherwise assumes the sibling-
+ * checkout layout these endpoints were written against.
+ */
+function resolveKannakaMemoryRoot() {
+    return process.env.KANNAKA_MEMORY_ROOT || resolve(PLUGIN_ROOT, "..", "kannaka-memory");
+}
+/**
  * Resolve the kannaka binary. On Windows the installer usually drops
  * kannaka.exe in %USERPROFILE%\.local\bin, which is not always on PATH — so
  * prefer it when it actually exists and otherwise hand the bare name to
@@ -1104,23 +1112,24 @@ async function createHttpServer() {
             }
             else if (pathname === '/api/experiments/ooda') {
                 // Serve OODA state from kannaka-memory experiments
+                const oodaPath = resolve(resolveKannakaMemoryRoot(), 'experiments', 'ooda-state.json');
                 try {
-                    const oodaPath = resolve('C:\\Users\\nickf\\Source\\kannaka-memory\\experiments\\ooda-state.json');
                     const content = await readFile(oodaPath, 'utf-8');
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(content);
                 }
                 catch (e) {
+                    console.error(`[experiments] OODA state unreadable at ${oodaPath}: ${e}`);
                     res.writeHead(404, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'OODA state not found' }));
+                    res.end(JSON.stringify({ error: 'OODA state not found', hint: 'set KANNAKA_MEMORY_ROOT to your kannaka-memory checkout' }));
                 }
             }
             else if (pathname === '/api/experiments/results') {
                 // Serve L3 experiment results
+                const resultsPath = resolve(resolveKannakaMemoryRoot(), 'research', 'results-L3.tsv');
                 try {
-                    const resultsPath = resolve('C:\\Users\\nickf\\Source\\kannaka-memory\\research\\results-L3.tsv');
                     const content = await readFile(resultsPath, 'utf-8');
-                    const lines = content.trim().split('\n');
+                    const lines = content.trim().split(/\r?\n/);
                     const headers = lines[0].split('\t');
                     const rows = lines.slice(1).map(line => {
                         const vals = line.split('\t');
@@ -1132,8 +1141,9 @@ async function createHttpServer() {
                     res.end(JSON.stringify({ headers, rows }));
                 }
                 catch (e) {
+                    console.error(`[experiments] L3 results unreadable at ${resultsPath}: ${e}`);
                     res.writeHead(404, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'Results not found' }));
+                    res.end(JSON.stringify({ error: 'Results not found', hint: 'set KANNAKA_MEMORY_ROOT to your kannaka-memory checkout' }));
                 }
             }
             else if (pathname === '/api/experiments/xi') {
