@@ -318,88 +318,14 @@ test_openclaw_flags_before_command() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Skill Registry & Build Tooling
+# Skill Discovery
+#
+# The generated tool registry (openclaw/src/tools/index.ts) and its generator
+# (scripts/build-openclaw.sh) were deleted in #59: 100 generated entries, none
+# with a tool implementation, and nothing ever imported the module. Skill
+# discovery has always gone through the runtime loader below, never the
+# registry — these gates cover the path that actually ships.
 # ═══════════════════════════════════════════════════════════════════════════════
-
-test_build_script_exists() {
-    test_case "build-openclaw.sh exists and is executable"
-    if [[ -x "$PROJECT_ROOT/scripts/build-openclaw.sh" ]]; then
-        test_pass
-    else
-        test_fail "build-openclaw.sh should exist and be executable"
-    fi
-}
-
-test_registry_generated() {
-    test_case "Skill registry index.ts exists"
-    if [[ -f "$PROJECT_ROOT/openclaw/src/tools/index.ts" ]]; then
-        test_pass
-    else
-        test_fail "openclaw/src/tools/index.ts not found"
-    fi
-}
-
-test_registry_contains_skills_and_commands() {
-    test_case "Registry contains both skills and commands"
-    local registry="$PROJECT_ROOT/openclaw/src/tools/index.ts"
-    if grep -q 'type: "skill"' "$registry" && grep -q 'type: "command"' "$registry"; then
-        test_pass
-    else
-        test_fail "Registry should contain both skill and command entries"
-    fi
-}
-
-test_registry_count_matches() {
-    test_case "Registry count matches actual entries"
-    local registry="$PROJECT_ROOT/openclaw/src/tools/index.ts"
-    local declared_count
-    declared_count=$(grep 'REGISTRY_COUNT' "$registry" | grep -o '[0-9]*')
-    local actual_count
-    actual_count=$(grep -c 'name: "' "$registry")
-
-    if [[ "$declared_count" == "$actual_count" ]]; then
-        test_pass
-    else
-        test_fail "REGISTRY_COUNT ($declared_count) != actual entries ($actual_count)"
-    fi
-}
-
-test_build_check_mode() {
-    test_case "build-openclaw.sh --check mode succeeds (registry in sync)"
-    local output exit_code
-    output=$("$PROJECT_ROOT/scripts/build-openclaw.sh" --check 2>&1) && exit_code=0 || exit_code=$?
-
-    if [[ $exit_code -eq 0 ]]; then
-        test_pass
-    else
-        test_fail "build-openclaw.sh --check failed (registry out of sync): $output"
-    fi
-}
-
-test_build_script_handles_crlf_frontmatter() {
-    test_case "build-openclaw.sh parses CRLF frontmatter (Windows checkouts)"
-    local tmpdir
-    tmpdir=$(mktemp -d) || { test_fail "could not create temp dir"; return; }
-    mkdir -p "$tmpdir/skills" "$tmpdir/commands" "$tmpdir/out"
-
-    # A skill whose frontmatter uses CRLF, as Git checks it out when
-    # core.autocrlf=true. The filename deliberately differs from the declared
-    # name so a parse failure shows up as the filename fallback.
-    printf -- '---\r\nname: crlf-probe\r\ndescription: CRLF probe skill\r\n---\r\n\r\nBody\r\n' \
-        > "$tmpdir/skills/zz-fixture.md"
-
-    local output
-    output=$(SKILLS_DIR="$tmpdir/skills" COMMANDS_DIR="$tmpdir/commands" \
-        OUTPUT_DIR="$tmpdir/out" "$PROJECT_ROOT/scripts/build-openclaw.sh" 2>&1)
-
-    if grep -q 'name: "crlf-probe", description: "CRLF probe skill"' "$tmpdir/out/index.ts" 2>/dev/null; then
-        test_pass
-    else
-        test_fail "CRLF frontmatter not parsed: $(cat "$tmpdir/out/index.ts" 2>/dev/null) | $output"
-    fi
-
-    rm -rf "$tmpdir"
-}
 
 test_skill_loader_handles_crlf_frontmatter() {
     test_case "Skill loader parses CRLF frontmatter (Windows checkouts)"
@@ -461,6 +387,70 @@ test_skill_loader_parses_frontmatter() {
     else
         test_fail "openclaw/src/skill-loader.ts not found"
     fi
+}
+
+test_skill_loader_finds_shipped_skills() {
+    test_case "Skill loader discovers every shipped skill and command"
+    local loader="$PROJECT_ROOT/openclaw/dist/skill-loader.js"
+
+    if ! command -v node >/dev/null 2>&1; then
+        test_skip "node not available"
+        return
+    fi
+    if [[ ! -f "$loader" ]]; then
+        test_fail "openclaw/dist/skill-loader.js not found (run: cd openclaw && npm run build)"
+        return
+    fi
+
+    # Cross-check the runtime loader against the filesystem source of truth.
+    # This is what octopus_list_skills actually calls; it never read the
+    # generated registry that #59 deleted.
+    local expected_skills expected_commands
+    expected_skills=$(find "$PROJECT_ROOT/.claude/skills" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+    expected_commands=$(find "$PROJECT_ROOT/.claude/commands" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+
+    if [[ "$expected_skills" -eq 0 ]]; then
+        test_fail "no skill markdown found under .claude/skills"
+        return
+    fi
+
+    local tmpdir
+    tmpdir=$(mktemp -d) || { test_fail "could not create temp dir"; return; }
+    cat > "$tmpdir/probe.mjs" <<'PROBE'
+import { pathToFileURL } from "node:url";
+
+const [loaderPath, pluginRoot, wantSkills, wantCommands] = process.argv.slice(2);
+const { loadSkills, loadCommands } = await import(pathToFileURL(loaderPath).href);
+
+const skills = await loadSkills(pluginRoot);
+const commands = await loadCommands(pluginRoot);
+
+if (skills.length !== Number(wantSkills)) {
+  console.error(`loadSkills returned ${skills.length}, expected ${wantSkills}`);
+  process.exit(1);
+}
+if (commands.length !== Number(wantCommands)) {
+  console.error(`loadCommands returned ${commands.length}, expected ${wantCommands}`);
+  process.exit(1);
+}
+const unnamed = skills.filter((s) => !s.name || s.description === "No description");
+if (unnamed.length > 0) {
+  console.error(`skills with unparsed frontmatter: ${unnamed.map((s) => s.file).join(", ")}`);
+  process.exit(1);
+}
+PROBE
+
+    local output exit_code
+    output=$(node "$tmpdir/probe.mjs" "$loader" "$PROJECT_ROOT" \
+        "$expected_skills" "$expected_commands" 2>&1) && exit_code=0 || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        test_pass
+    else
+        test_fail "Skill discovery drifted from the filesystem: $output"
+    fi
+
+    rm -rf "$tmpdir"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -610,15 +600,10 @@ test_openclaw_introspection_tools
 test_openclaw_default_workflows_match_manifest
 test_openclaw_flags_before_command
 
-# Build Tooling
-test_build_script_exists
-test_registry_generated
-test_registry_contains_skills_and_commands
-test_registry_count_matches
-test_build_check_mode
-test_build_script_handles_crlf_frontmatter
+# Skill Discovery
 test_skill_loader_handles_crlf_frontmatter
 test_skill_loader_parses_frontmatter
+test_skill_loader_finds_shipped_skills
 
 # TypeScript Config
 test_mcp_tsconfig_module_resolution

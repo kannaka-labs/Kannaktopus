@@ -3,7 +3,7 @@
 #
 # Validates:
 # 1. OpenClaw extension manifest is valid
-# 2. Generated tool registry matches current skills
+# 2. Skills are discoverable through the runtime skill loader
 # 3. MCP server configuration is valid
 # 4. Claude Code plugin.json is NOT modified (zero-change guarantee)
 #
@@ -183,8 +183,8 @@ fi
 
 echo ""
 
-# --- 4. Skill Registry Sync ---
-echo "4. Skill Registry Sync"
+# --- 4. Skill Discovery ---
+echo "4. Skill Discovery"
 
 SKILL_COUNT=$(ls -1 "$PLUGIN_ROOT/.claude/skills/"*.md 2>/dev/null | wc -l | tr -d ' ')
 COMMAND_COUNT=$(ls -1 "$PLUGIN_ROOT/.claude/commands/"*.md 2>/dev/null | wc -l | tr -d ' ')
@@ -192,15 +192,12 @@ TOTAL=$((SKILL_COUNT + COMMAND_COUNT))
 
 pass "Found ${SKILL_COUNT} skills and ${COMMAND_COUNT} commands (${TOTAL} total)"
 
-# Check build script exists
-if [[ -x "$PLUGIN_ROOT/scripts/build-openclaw.sh" ]]; then
-    pass "build-openclaw.sh is executable"
+# Skills are discovered at runtime by openclaw/src/skill-loader.ts; there is no
+# generated registry to keep in sync (deleted in #59 — it registered nothing).
+if [[ -f "$PLUGIN_ROOT/openclaw/src/skill-loader.ts" ]]; then
+    pass "skill-loader.ts is the runtime source of skill metadata"
 else
-    if [[ -f "$PLUGIN_ROOT/scripts/build-openclaw.sh" ]]; then
-        pass "build-openclaw.sh exists (not yet executable)"
-    else
-        fail "build-openclaw.sh not found"
-    fi
+    fail "openclaw/src/skill-loader.ts not found"
 fi
 
 echo ""
