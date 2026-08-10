@@ -176,6 +176,69 @@ else
     fail "Root workspace not rejected"
 fi
 
+# Windows drive-qualified workspace must not be rejected as non-absolute
+WIN_PATH=$(echo "$VALID_JOB" | jq '.execution.workspace = "C:\\Users\\runner\\project"')
+win_path_file="${SCHEDULER_DIR}/win-path.json"
+store_atomic_write "$win_path_file" "$WIN_PATH"
+result=$(policy_check "$win_path_file" 2>/dev/null) || true
+reason=$(echo "$result" | jq -r '.reason // ""')
+if [[ "$reason" == *"must be an absolute path"* ]]; then
+    fail "Windows workspace path rejected as non-absolute: $result"
+else
+    pass "Windows workspace path treated as absolute"
+fi
+
+# A Windows workspace that really exists must be admitted outright
+if command -v cygpath > /dev/null 2>&1; then
+    win_real=$(cygpath -w "$HOME")
+    WIN_REAL=$(echo "$VALID_JOB" | jq --arg w "$win_real" '.execution.workspace = $w')
+    win_real_file="${SCHEDULER_DIR}/win-real.json"
+    store_atomic_write "$win_real_file" "$WIN_REAL"
+    result=$(policy_check "$win_real_file" 2>/dev/null) || true
+    allowed=$(echo "$result" | jq -r '.allowed')
+    if [[ "$allowed" == "true" ]]; then
+        pass "Existing Windows workspace passes policy"
+    else
+        fail "Existing Windows workspace rejected: $result"
+    fi
+fi
+
+# Traversal must still be caught inside a Windows path
+WIN_TRAVERSAL=$(echo "$VALID_JOB" | jq '.execution.workspace = "C:\\Users\\runner\\..\\Windows"')
+win_trav_file="${SCHEDULER_DIR}/win-traversal.json"
+store_atomic_write "$win_trav_file" "$WIN_TRAVERSAL"
+result=$(policy_check "$win_trav_file" 2>/dev/null) || true
+allowed=$(echo "$result" | jq -r '.allowed')
+if [[ "$allowed" == "false" ]]; then
+    pass "Windows path traversal rejected by policy"
+else
+    fail "Windows path traversal not rejected"
+fi
+
+# Windows drive root is a root path, same as /
+WIN_ROOT=$(echo "$VALID_JOB" | jq '.execution.workspace = "C:\\"')
+win_root_file="${SCHEDULER_DIR}/win-root.json"
+store_atomic_write "$win_root_file" "$WIN_ROOT"
+result=$(policy_check "$win_root_file" 2>/dev/null) || true
+allowed=$(echo "$result" | jq -r '.allowed')
+if [[ "$allowed" == "false" ]]; then
+    pass "Windows drive root rejected by policy"
+else
+    fail "Windows drive root not rejected"
+fi
+
+# Relative paths must still be rejected
+REL_PATH=$(echo "$VALID_JOB" | jq '.execution.workspace = "relative/project"')
+rel_path_file="${SCHEDULER_DIR}/rel-path.json"
+store_atomic_write "$rel_path_file" "$REL_PATH"
+result=$(policy_check "$rel_path_file" 2>/dev/null) || true
+allowed=$(echo "$result" | jq -r '.allowed')
+if [[ "$allowed" == "false" ]]; then
+    pass "Relative workspace rejected by policy"
+else
+    fail "Relative workspace not rejected"
+fi
+
 # Dangerous flag in prompt should fail
 BAD_FLAG=$(echo "$VALID_JOB" | jq '.task.prompt = "run with --dangerously-skip-permissions"')
 bad_flag_file="${SCHEDULER_DIR}/bad-flag.json"
@@ -186,6 +249,44 @@ if [[ "$allowed" == "false" ]]; then
     pass "Dangerous flag in prompt rejected by policy"
 else
     fail "Dangerous flag in prompt not rejected"
+fi
+
+# --- Test: Cron weekday domain ---
+echo ""
+echo "--- Cron Weekday 7 (Sunday) ---"
+
+# date +%u reports Sunday as 7; a cron expression may write Sunday as 0 or 7
+check_wday() {
+    local desc="$1" expr="$2" wday="$3" expect="$4"
+    local got
+    if cron_matches "$expr" 0 2 15 2 "$wday" 2>/dev/null; then got=yes; else got=no; fi
+    if [[ "$got" == "$expect" ]]; then
+        pass "$desc ($expr @ wday=$wday)"
+    else
+        fail "$desc ($expr @ wday=$wday gave $got, expected $expect)"
+    fi
+}
+
+check_wday "weekday 7 fires on Sunday"          "0 2 * * 7"     7 yes
+check_wday "weekday 7 silent on Monday"         "0 2 * * 7"     1 no
+check_wday "weekday 0 still fires on Sunday"    "0 2 * * 0"     7 yes
+check_wday "list 1,7 fires on Sunday"           "0 2 * * 1,7"   7 yes
+check_wday "list 1,7 fires on Monday"           "0 2 * * 1,7"   1 yes
+check_wday "list 1,7 silent on Tuesday"         "0 2 * * 1,7"   2 no
+check_wday "range 1-7 fires on Sunday"          "0 2 * * 1-7"   7 yes
+check_wday "range 0-7 fires on Sunday"          "0 2 * * 0-7"   7 yes
+check_wday "range 1-5 silent on Sunday"         "0 2 * * 1-5"   7 no
+
+# The number after a "/" is a step count, not a weekday, and must survive intact
+check_wday "step 1-7/2 fires on Sunday"         "0 2 * * 1-7/2" 7 yes
+check_wday "step 1-7/2 silent on Tuesday"       "0 2 * * 1-7/2" 2 no
+check_wday "step 2-7/3 skips Sunday"            "0 2 * * 2-7/3" 7 no
+check_wday "step 2-7/3 fires on Tuesday"        "0 2 * * 2-7/3" 2 yes
+
+if cron_matches "*/7 * * * *" 7 2 15 2 3 2>/dev/null; then
+    pass "step */7 in minute field unaffected by weekday normalization"
+else
+    fail "step */7 in minute field broken by weekday normalization"
 fi
 
 # --- Test: Kill switches ---
