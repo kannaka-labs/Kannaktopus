@@ -28,7 +28,7 @@ test_mcp_debate_uses_post_flags() {
 
 test_oc_debate_uses_post_flags() {
     test_case "OpenClaw debate passes grapple flags via postFlags (after command)"
-    if grep -q 'executeOrchestrate("grapple".*\[\].*\[' "$OC_SRC"; then
+    if grep -q 'executeOrchestrate(.*"grapple".*\[\].*\[' "$OC_SRC"; then
         test_pass
     else
         test_fail "OpenClaw debate should use postFlags parameter"
