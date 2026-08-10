@@ -119,10 +119,9 @@ The bridge script (`scripts/kannaka-bridge.sh`) wraps these into fault-tolerant 
 
 The constellation transforms `observe --json` output into 3D-plottable data:
 
-- **Clusters** are placed on a sphere using Fibonacci distribution
-- **Memories** orbit their cluster using golden-angle spirals
-- **Skip links** connect related clusters across the topology
-- **Coherence** controls the spread — tighter clusters mean stronger resonance
+- **Clusters** come from `clusters.clusters[]` — real ids, sizes, themes, order parameters and membership
+- **Positions** are layout-only: clusters are placed on a sphere using Fibonacci distribution and memories orbit their cluster on golden-angle spirals. The HRM has no spatial embedding, so these coordinates encode no measured geometry and no relationship may be inferred from proximity.
+- **Skip links** are not reported. `observe --json` exposes only a scalar `total_skip_links` count and an empty `strongest_links`, so `skip_links` is always `[]` rather than edges invented from layout distance.
 
 This powers the visualization in [kannaka-observatory](https://github.com/NickFlach/kannaka-observatory).
 
