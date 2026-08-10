@@ -2179,6 +2179,13 @@ do_release() {
     git push origin main --no-verify
     echo -e "${GREEN}✓ Branch pushed${NC}"
 
+    # Step 7: Publish the GitHub release. validate-release.sh is read-only unless
+    # --publish is passed, so this is the step that actually creates the release.
+    echo -e "\n${BLUE}Step 6: Publishing GitHub release...${NC}"
+    bash "$SCRIPT_DIR/validate-release.sh" --publish || {
+        echo -e "${YELLOW}⚠ Release publish reported a problem — see output above${NC}"
+    }
+
     echo -e "\n${GREEN}═══════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}  ✅ Released $tag${NC}"
     echo -e "${GREEN}═══════════════════════════════════════════════════════════${NC}"
