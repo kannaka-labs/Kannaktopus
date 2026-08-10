@@ -242,6 +242,100 @@ else
     fail "Agent ID store/get round-trip" "got=$retrieved"
   fi
 
+  # ── Regression: #62 — failed tasks must not count as completed ─────────────
+  suite "Regression: phase accounting (#62)"
+
+  bridge_register_task "gate-1" "codex" "gatephase" "researcher" ""
+  bridge_register_task "gate-2" "gemini" "gatephase" "researcher" ""
+  bridge_mark_task_complete "gate-1" "failed"
+  bridge_mark_task_complete "gate-2" "completed"
+
+  gate_completed=""
+  gate_completed=$(jq -r '.phases.gatephase.completed_tasks' "$_BRIDGE_LEDGER" 2>/dev/null)
+  if [[ "$gate_completed" == "1" ]]; then
+    pass "Failed task not counted in completed_tasks"
+  else
+    fail "Failed task not counted in completed_tasks" "completed_tasks=$gate_completed (expected 1 of 2)"
+  fi
+
+  if bridge_check_phase_complete "gatephase"; then
+    fail "Phase holding a failed task is not complete" "phase reported complete"
+  else
+    pass "Phase holding a failed task is not complete"
+  fi
+
+  bridge_inject_gate_task "gatephase" "quality" "1.0"
+  if bridge_evaluate_gate "gatephase"; then
+    fail "Gate at threshold 1.0 does not pass with a failed task" "gate passed"
+  else
+    pass "Gate at threshold 1.0 does not pass with a failed task"
+  fi
+
+  # ── Regression: #63 — unknown dependencies must block ──────────────────────
+  suite "Regression: missing dependency (#63)"
+
+  bridge_register_task "dep-orphan" "claude" "depphase" "coder" "task-DOES-NOT-EXIST"
+  if bridge_is_task_unblocked "dep-orphan"; then
+    fail "Task with an unknown dependency stays blocked" "reported unblocked"
+  else
+    pass "Task with an unknown dependency stays blocked"
+  fi
+
+  # task-1 is completed; the unknown dep must still block
+  bridge_register_task "dep-mixed" "claude" "depphase" "coder" "task-1,task-DOES-NOT-EXIST"
+  if bridge_is_task_unblocked "dep-mixed"; then
+    fail "Completed dep plus unknown dep stays blocked" "reported unblocked"
+  else
+    pass "Completed dep plus unknown dep stays blocked"
+  fi
+
+  bridge_register_task "dep-ok" "claude" "depphase" "coder" "task-1"
+  if bridge_is_task_unblocked "dep-ok"; then
+    pass "Known completed dependency still unblocks"
+  else
+    fail "Known completed dependency still unblocks" "reported blocked"
+  fi
+
+  # ── Regression: #64 — failed ledger writes must not report success ─────────
+  suite "Regression: atomic update failure surfaces (#64)"
+
+  STUB_DIR="$BRIDGE_TEST_DIR/stub"
+  mkdir -p "$STUB_DIR"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_DIR/jq"
+  chmod +x "$STUB_DIR/jq"
+
+  ledger_before=""
+  ledger_before=$(cat "$_BRIDGE_LEDGER")
+  saved_path="$PATH"
+  PATH="$STUB_DIR:$PATH"
+  atomic_rc=0
+  bridge_atomic_ledger_update '.status = "wedged"' || atomic_rc=$?
+  register_rc=0
+  bridge_register_task "should-not-exist" "codex" "depphase" "coder" "" || register_rc=$?
+  complete_rc=0
+  bridge_mark_task_complete "task-1" "completed" || complete_rc=$?
+  PATH="$saved_path"
+  ledger_after=""
+  ledger_after=$(cat "$_BRIDGE_LEDGER")
+
+  if [[ "$atomic_rc" -ne 0 ]]; then
+    pass "bridge_atomic_ledger_update returns non-zero when jq fails"
+  else
+    fail "bridge_atomic_ledger_update returns non-zero when jq fails" "rc=$atomic_rc"
+  fi
+
+  if [[ "$register_rc" -ne 0 && "$complete_rc" -ne 0 ]]; then
+    pass "Task register/complete propagate the lost write"
+  else
+    fail "Task register/complete propagate the lost write" "register_rc=$register_rc complete_rc=$complete_rc"
+  fi
+
+  if [[ "$ledger_before" == "$ledger_after" ]]; then
+    pass "Failed ledger update leaves the ledger untouched"
+  else
+    fail "Failed ledger update leaves the ledger untouched" "ledger mutated"
+  fi
+
   # Test cleanup
   bridge_cleanup
   if [[ -d "$BRIDGE_TEST_DIR/history" ]]; then

@@ -35,6 +35,9 @@ bridge_is_enabled() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # BRIDGE: Lockfile-based atomic ledger updates
 # ═══════════════════════════════════════════════════════════════════════════════
+# Returns 0 only when the ledger was actually rewritten. A failing jq expression,
+# a corrupt ledger or a failed rename returns 1 so callers can decide whether the
+# lost write is fatal (task/gate state) or best-effort (memory/telemetry writes).
 bridge_atomic_ledger_update() {
     local jq_expression="$1"
     shift
@@ -52,13 +55,18 @@ bridge_atomic_ledger_update() {
         if (set -C; echo $$ > "$lockfile") 2>/dev/null; then
             # Lock acquired - perform update
             local tmp="${_BRIDGE_LEDGER}.tmp.$$"
+            local rc=0
             if jq "$jq_expression" "$@" "$_BRIDGE_LEDGER" > "$tmp" 2>/dev/null; then
-                mv "$tmp" "$_BRIDGE_LEDGER"
+                mv "$tmp" "$_BRIDGE_LEDGER" || rc=1
             else
                 rm -f "$tmp"
+                rc=1
             fi
             rm -f "$lockfile"
-            return 0
+            if [[ $rc -ne 0 ]]; then
+                log "ERROR" "BRIDGE: Ledger update failed — write discarded (filter: ${jq_expression%%$'\n'*})" 2>/dev/null || true
+            fi
+            return $rc
         fi
 
         # Check for stale lock (older than 10 seconds)
@@ -151,11 +159,16 @@ bridge_register_task() {
             depends_on: ($deps | split(",") | map(select(. != ""))),
             registered_at: $ts,
             completed_at: null
-        } | .phases[$phase].total_tasks = ((.phases[$phase].total_tasks // 0) + 1)'
+        } | .phases[$phase].total_tasks = ((.phases[$phase].total_tasks // 0) + 1)' || {
+            log "ERROR" "BRIDGE: Failed to register task $task_id in phase $phase" 2>/dev/null || true
+            return 1
+        }
 }
 
 # Check if all dependencies for a task are completed
 # Returns 0 if unblocked, 1 if blocked
+# A dependency that is not present in .tasks blocks: an unknown task ID cannot be
+# shown to have completed, so it must never be silently treated as satisfied.
 bridge_is_task_unblocked() {
     local task_id="$1"
 
@@ -165,17 +178,21 @@ bridge_is_task_unblocked() {
 
     local blocked
     blocked=$(jq -r --arg id "$task_id" '
-        (.tasks[$id].depends_on // []) as $deps |
+        (.tasks // {}) as $tasks |
+        ($tasks[$id].depends_on // []) as $deps |
         if ($deps | length) == 0 then "no"
-        else
-            [.tasks | to_entries[] | select(.key as $k | $deps | index($k)) | select(.value.status != "completed")] |
-            if length > 0 then "yes" else "no" end
+        elif ([$deps[] | select($tasks[.].status == "completed")] | length) == ($deps | length) then "no"
+        else "yes"
         end
     ' "$_BRIDGE_LEDGER" 2>/dev/null)
 
     [[ "$blocked" != "yes" ]]
 }
 
+# Record a terminal status for a task. Only "completed" counts towards the phase's
+# completed_tasks — failed/cancelled tasks must not satisfy phase or gate checks.
+# The counter is derived from .tasks rather than incremented, matching
+# bridge_get_workflow_status() and staying correct if a status is revised.
 bridge_mark_task_complete() {
     local task_id="$1"
     local status="${2:-completed}"
@@ -188,7 +205,12 @@ bridge_mark_task_complete() {
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '.tasks[$id].status = $status |
          .tasks[$id].completed_at = $ts |
-         .phases[.tasks[$id].phase].completed_tasks = ((.phases[.tasks[$id].phase].completed_tasks // 0) + 1)'
+         (.tasks[$id].phase) as $phase |
+         .phases[$phase].completed_tasks =
+             ([.tasks[] | select(.phase == $phase and .status == "completed")] | length)' || {
+            log "ERROR" "BRIDGE: Failed to mark task $task_id as $status" 2>/dev/null || true
+            return 1
+        }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +249,7 @@ bridge_inject_gate_task() {
             threshold: $threshold,
             status: "pending",
             result: null
-        }'
+        }' || log "ERROR" "BRIDGE: Failed to inject $gate_type gate for phase $phase — evaluation will fall back to the default threshold" 2>/dev/null || true
 }
 
 bridge_evaluate_gate() {
@@ -261,7 +283,11 @@ bridge_evaluate_gate() {
         --arg passed "$passed" \
         --arg ratio "$completion_ratio" \
         '.phases[$phase].gate.status = "evaluated" |
-         .phases[$phase].gate.result = {passed: ($passed == "true"), completion_ratio: ($ratio | tonumber)}'
+         .phases[$phase].gate.result = {passed: ($passed == "true"), completion_ratio: ($ratio | tonumber)}' || {
+            # Fail closed: an unrecorded verdict is reported as "not passed".
+            log "ERROR" "BRIDGE: Failed to record gate result for phase $phase (computed passed=$passed)" 2>/dev/null || true
+            return 1
+        }
 
     [[ "$passed" == "true" ]]
 }
@@ -314,7 +340,7 @@ bridge_enqueue_cross_provider_task() {
             target: $target,
             queued_at: $ts,
             status: "pending"
-        }]'
+        }]' || log "WARN" "BRIDGE: Failed to enqueue cross-provider task from $source_provider" 2>/dev/null || true
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -331,7 +357,7 @@ bridge_route_memory() {
         --arg phase "$phase" \
         --arg key "$key" \
         --arg value "$value" \
-        '.memory.warm_start[$phase + "." + $key] = $value'
+        '.memory.warm_start[$phase + "." + $key] = $value' || log "WARN" "BRIDGE: Failed to route memory $phase.$key" 2>/dev/null || true
 }
 
 bridge_write_warm_start_memory() {
@@ -346,7 +372,7 @@ bridge_write_warm_start_memory() {
     bridge_atomic_ledger_update \
         --arg phase "$phase" \
         --arg file "$memory_file" \
-        '.memory.warm_start[$phase] = $file'
+        '.memory.warm_start[$phase] = $file' || log "WARN" "BRIDGE: Warm-start memory written to $memory_file but not indexed in the ledger" 2>/dev/null || true
 }
 
 bridge_generate_phase_summary() {
@@ -368,7 +394,7 @@ bridge_generate_phase_summary() {
             summary: $summary,
             synthesis_file: $file,
             generated_at: (now | todate)
-        }'
+        }' || log "WARN" "BRIDGE: Failed to store phase summary for $phase" 2>/dev/null || true
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -406,7 +432,7 @@ bridge_update_current_phase() {
 
     bridge_atomic_ledger_update \
         --arg phase "$phase" \
-        '.current_phase = $phase'
+        '.current_phase = $phase' || log "ERROR" "BRIDGE: Failed to set current_phase=$phase" 2>/dev/null || true
 }
 
 bridge_mark_workflow_complete() {
@@ -414,7 +440,11 @@ bridge_mark_workflow_complete() {
 
     bridge_atomic_ledger_update \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '.status = "completed" | .completed_at = $ts'
+        '.status = "completed" | .completed_at = $ts' || {
+            # Leaving status="running" would trip the nested-team guard on the next run.
+            log "ERROR" "BRIDGE: Failed to mark workflow complete — ledger still reads as running" 2>/dev/null || true
+            return 1
+        }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -433,7 +463,11 @@ bridge_store_agent_id() {
     bridge_atomic_ledger_update \
         --arg id "$task_id" \
         --arg agent_id "$agent_id" \
-        '.tasks[$id].agent_id = $agent_id'
+        '.tasks[$id].agent_id = $agent_id' || {
+            # Without the agent_id a later resume cannot find the teammate.
+            log "ERROR" "BRIDGE: Failed to store agent_id=$agent_id for task=$task_id" 2>/dev/null || true
+            return 1
+        }
 
     log "DEBUG" "BRIDGE: Stored agent_id=$agent_id for task=$task_id"
 }
@@ -471,7 +505,10 @@ bridge_shutdown_teammate() {
     bridge_atomic_ledger_update \
         --arg id "$task_id" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '.tasks[$id].status = "shutting_down" | .tasks[$id].shutdown_requested_at = $ts'
+        '.tasks[$id].status = "shutting_down" | .tasks[$id].shutdown_requested_at = $ts' || {
+            log "ERROR" "BRIDGE: Failed to mark task $task_id as shutting_down" 2>/dev/null || true
+            return 1
+        }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
