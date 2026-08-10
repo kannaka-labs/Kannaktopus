@@ -36,6 +36,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from typing import Optional
 
 try:
@@ -112,11 +113,16 @@ def _envelope() -> dict:
     enforced by kannaka-radio's drift detector) requires schema_version,
     ts, and agent_id on every event. Without these the radio logs warnings
     and — after the 2026-06-01 cutover — drops the message entirely.
+
+    Both value formats are pinned by that contract, not free-form:
+      * `schema_version` is the spec version string "1.0" (contract :22-23
+        and every example payload) — NOT the bare "1" this used to emit.
+      * `ts` is unix-MILLISECONDS as a number (contract :12, typed
+        `ts: number` at :62-63) — NOT an ISO-8601 string.
     """
-    from datetime import datetime, timezone
     return {
-        "schema_version": "1",
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "schema_version": "1.0",
+        "ts": int(time.time() * 1000),
         "agent_id": ARM_ID,
     }
 
@@ -215,9 +221,36 @@ async def run() -> int:
     try:
         # Send first join + phase immediately so the arm shows up within a
         # second of the daemon starting (don't wait one interval).
-        await nc.publish(JOIN_SUBJECT, payload)
-        await nc.publish(PHASE_SUBJECT, _phase_payload(beat))
-        log.info("published initial %s + %s for %s", JOIN_SUBJECT, PHASE_SUBJECT, ARM_ID)
+        #
+        # Guarded exactly like the steady-state publish below: an unguarded
+        # failure here escaped run() entirely (the enclosing try has only a
+        # finally), so one bad publish at startup — a stale connection, an
+        # ACL rejection — killed the whole beacon after logging a confusing
+        # "graceful leave failed" from the shutdown path.
+        try:
+            await nc.publish(JOIN_SUBJECT, payload)
+            await nc.publish(PHASE_SUBJECT, _phase_payload(beat))
+            log.info("published initial %s + %s for %s", JOIN_SUBJECT, PHASE_SUBJECT, ARM_ID)
+        except NatsError as exc:
+            log.warning("initial publish failed (%s); reconnecting", exc)
+            try:
+                await nc.close()
+            except Exception:  # noqa: BLE001
+                pass
+            nc = await _connect_with_backoff()
+            try:
+                await nc.publish(JOIN_SUBJECT, payload)
+                await nc.publish(PHASE_SUBJECT, _phase_payload(beat))
+                log.info("published initial %s + %s for %s after reconnect",
+                         JOIN_SUBJECT, PHASE_SUBJECT, ARM_ID)
+            except NatsError as exc:
+                # Still no good — stay alive anyway. The heartbeat loop
+                # retries every interval and the arm appears as soon as the
+                # bus accepts a phase beat.
+                log.warning(
+                    "initial publish failed again (%s); continuing on the "
+                    "heartbeat loop", exc,
+                )
 
         while not stop.is_set():
             try:

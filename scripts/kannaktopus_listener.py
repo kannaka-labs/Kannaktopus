@@ -41,9 +41,16 @@ Supported commands (initial set; expand as the control panel grows):
 
 Env:
     NATS_URL                       (default nats://swarm.ninja-portal.com:4222)
-    NATS_USER, NATS_PASSWORD       (optional; defaults to anon)
+    NATS_USER, NATS_PASSWORD       (both required for authenticated subjects;
+                                   without them the listener connects anon and
+                                   logs a WARNING — the constellation bus
+                                   restricts KANNAKTOPUS.command.* to
+                                   authenticated users, so an anon listener may
+                                   only ever receive KANNAKA.ask.*)
     KANNAKTOPUS_ARM_ID             (default kannaktopus-01)
     KANNAKTOPUS_LOG_LEVEL          (default INFO)
+    HTTP_PORT                      (optional; the port mcp-server actually
+                                   binds — reported as `mcp_listen_port`)
 
 Dependency: ``pip install nats-py>=2.7``.
 """
@@ -58,6 +65,7 @@ import shutil
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 try:
@@ -100,17 +108,58 @@ def cmd_ping(_args: dict[str, Any]) -> dict[str, Any]:
     return {"pong": True, "arm_id": ARM_ID, "ts": time.time()}
 
 
+def _resolve_orchestrate() -> str | None:
+    """Absolute path to orchestrate.sh, or None if it isn't installed.
+
+    Checked in order: alongside THIS script (the ordinary case — the repo
+    checkout ships scripts/orchestrate.sh but never puts it on PATH), then
+    PATH, then the /opt install prefix. Probing only PATH and /opt made
+    every non-/opt deployment report orchestrate_available=false even with
+    the script sitting in the same directory as this listener.
+    """
+    local = Path(__file__).resolve().with_name("orchestrate.sh")
+    if local.is_file():
+        return str(local)
+    on_path = shutil.which("orchestrate.sh")
+    if on_path:
+        return on_path
+    packaged = "/opt/kannaktopus/scripts/orchestrate.sh"
+    if os.path.isfile(packaged):
+        return packaged
+    return None
+
+
+def _resolve_mcp_port() -> int | None:
+    """Port the MCP HTTP server actually binds, or None if none is configured.
+
+    mcp-server/src/index.ts starts its HTTP server only when HTTP_PORT is
+    set; KANNAKTOPUS_MCP_PORT appears nowhere in mcp-server/src, so the old
+    `KANNAKTOPUS_MCP_PORT or 8787` default advertised a port that nothing
+    was listening on. KANNAKTOPUS_MCP_PORT is still honoured as an explicit
+    operator override (e.g. a proxy fronting the server on another port) but
+    is no longer invented when unset.
+    """
+    for var in ("HTTP_PORT", "KANNAKTOPUS_MCP_PORT"):
+        raw = os.environ.get(var, "").strip()
+        if not raw:
+            continue
+        try:
+            return int(raw)
+        except ValueError:
+            log.warning("ignoring non-numeric %s=%r", var, raw)
+    return None
+
+
 def cmd_status(_args: dict[str, Any]) -> dict[str, Any]:
     """Best-effort probe of locally-resolvable Kannaktopus surfaces."""
-    mcp_port = int(os.environ.get("KANNAKTOPUS_MCP_PORT", "8787"))
-    orchestrate_path = shutil.which("orchestrate.sh") or os.path.exists(
-        "/opt/kannaktopus/scripts/orchestrate.sh"
-    )
+    orchestrate_path = _resolve_orchestrate()
     kannaka_bin = shutil.which("kannaka")
     return {
         "arm_id": ARM_ID,
-        "mcp_listen_port": mcp_port,
-        "orchestrate_available": bool(orchestrate_path),
+        # null when no HTTP listener is configured — see _resolve_mcp_port.
+        "mcp_listen_port": _resolve_mcp_port(),
+        "orchestrate_available": orchestrate_path is not None,
+        "orchestrate_path": orchestrate_path,
         "kannaka_bin_available": bool(kannaka_bin),
         "platform": platform.platform(),
     }
@@ -211,7 +260,19 @@ async def _connect_with_backoff() -> "nats.NATS":
     while True:
         try:
             nc = await nats.connect(NATS_URL, **_connect_kwargs())
-            log.info("connected to NATS %s as %s", NATS_URL, NATS_USER or "anon")
+            if NATS_USER and NATS_PASSWORD:
+                log.info("connected to NATS %s as %s", NATS_URL, NATS_USER)
+            else:
+                # Not fatal — KANNAKA.ask.> is anon-publishable — but every
+                # KANNAKTOPUS.command.* subject we subscribe to is restricted
+                # to authenticated users on the constellation bus, so an anon
+                # listener is a half-deaf listener. Say so loudly.
+                log.warning(
+                    "connected to NATS %s as anon - KANNAKTOPUS.command.* is "
+                    "restricted to authenticated users on this bus; set "
+                    "NATS_USER and NATS_PASSWORD to receive those commands",
+                    NATS_URL,
+                )
             return nc
         except Exception as exc:  # noqa: BLE001
             log.warning("NATS connect failed (%s); retrying in %.1fs", exc, delay)
@@ -280,9 +341,31 @@ async def run() -> int:
     async def _on_msg(msg: "Msg") -> None:
         await _handle_message(nc, msg)
 
-    for subject in (DIRECT_SUBJECT, BROADCAST_SUBJECT, ASK_SUBJECT, ASK_BROADCAST_SUBJECT):
-        await nc.subscribe(subject, cb=_on_msg)
-    log.info("subscribed to 4 subjects; awaiting commands")
+    wanted = (DIRECT_SUBJECT, BROADCAST_SUBJECT, ASK_SUBJECT, ASK_BROADCAST_SUBJECT)
+    subscribed: list[str] = []
+    for subject in wanted:
+        # Per-subject guard: these subjects live under two different ACL
+        # groups (KANNAKTOPUS.command.* is authenticated-only, KANNAKA.ask.*
+        # is anon-publishable). Subscribing to all four in one unguarded
+        # loop meant a single rejected subject aborted startup and took the
+        # listener down with it, including the subjects it *was* allowed.
+        try:
+            await nc.subscribe(subject, cb=_on_msg)
+        except Exception as exc:  # noqa: BLE001
+            log.error("subscribe to %s failed (%s); continuing", subject, exc)
+            continue
+        subscribed.append(subject)
+
+    if not subscribed:
+        log.error(
+            "subscribed to 0/%d subjects — the listener is running but deaf; "
+            "check NATS credentials and bus ACLs", len(wanted),
+        )
+    else:
+        log.info(
+            "subscribed to %d/%d subjects (%s); awaiting commands",
+            len(subscribed), len(wanted), ", ".join(subscribed),
+        )
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
