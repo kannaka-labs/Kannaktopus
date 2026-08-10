@@ -241,31 +241,105 @@ async function traverseHrm(start: string, depth: number, topK: number) {
   return { nodes: Object.values(nodes), edges };
 }
 
-/** Generate 3D constellation data from HRM status */
-function generateConstellation(status: {total_memories: number, num_clusters: number, phi: number}) {
-  const PHI_ANGLE = 2.399963; // golden angle
-  const memories: Array<{ x: number; y: number; z: number; size: number; cluster_id: number }> = [];
-  const clusters: Array<{ id: number; count: number; coherence: number; center: { x: number; y: number; z: number } }> = [];
-  const skipLinks: Array<{ from: number; to: number; strength: number }> = [];
+/**
+ * Build 3D constellation data from a parsed `observe --json` report (issue #48).
+ *
+ * This used to take `kannaka status` counters and invent the topology from
+ * them: per-cluster membership by dividing `total_memories` by `num_clusters`,
+ * cluster centers on a golden-angle spiral, and — worst — `skip_links` derived
+ * from the geometric distance between those self-invented centers, which
+ * encoded nothing but the layout algorithm. All of that is gone.
+ *
+ * Clusters, sizes, themes, order parameters and membership now come from
+ * `clusters.clusters[]`, which the HRM genuinely reports.
+ *
+ * Two deliberate calls, per the decision on #48:
+ *
+ *  - `skip_links` is ALWAYS `[]`. The payload carries no edge list anywhere:
+ *    only the scalar `consciousness.total_skip_links` and an empty
+ *    `topology.strongest_links`. Empty is the honest answer; synthesizing
+ *    edges is the specific lie being removed.
+ *  - 3D POSITIONS ARE KEPT. The renderer needs coordinates and the HRM exposes
+ *    no spatial embedding, so clusters and points get deterministic layout
+ *    coordinates. Those are a presentation concern, not a claim about
+ *    topology, and the response marks them as layout-derived so no consumer
+ *    mistakes them for measured geometry.
+ */
+function generateConstellation(observe: any) {
+  const PHI_ANGLE = 2.399963; // golden angle — layout only, see `layout` below
+  const memories: Array<{ id?: string; x: number; y: number; z: number; size: number; cluster_id: number }> = [];
+  const clusters: Array<Record<string, unknown>> = [];
+  // Always empty: the HRM reports no edges. Typed loosely so the shape stays
+  // stable for consumers if the HRM ever grows a real edge list.
+  const skipLinks: Array<{ from: string; to: string; strength: number }> = [];
 
-  // Coerce + validate divisor/count fields. A truthy non-numeric string (e.g. "0")
-  // would otherwise yield NaN coordinates that poison the whole constellation.
-  let nc = Number(status.num_clusters);
-  if (!Number.isFinite(nc) || nc < 0) nc = 0;
-  nc = Math.floor(nc);
+  // `clusters.clusters[]` is the source of truth for the cluster LIST.
+  // `consciousness.num_clusters` and `clusters.num_clusters` can disagree with
+  // it (and with each other), so neither is used to size or drive this loop —
+  // only the array actually present is trusted, and both counters are surfaced
+  // in `counters` below so a disagreement is visible rather than papered over.
+  const rawClusters: any[] = Array.isArray(observe?.clusters?.clusters)
+    ? observe.clusters.clusters
+    : [];
 
-  let totalMemories = Number(status.total_memories);
-  if (!Number.isFinite(totalMemories) || totalMemories < 0) totalMemories = 0;
-  totalMemories = Math.floor(totalMemories);
+  const consciousness = observe?.consciousness ?? {};
 
-  // Zero clusters is a real state (HRM not yet consolidated), not a divide-by-zero
-  // to paper over: report nothing rather than fabricating one giant cluster that
-  // swallows every memory. Returning early also keeps `nc` out of the divisor.
-  if (nc === 0) return { memories, clusters, skip_links: skipLinks };
+  const layout = {
+    derived: true,
+    algorithm: "golden-angle-sphere",
+    note:
+      "Positions and point sizes are LAYOUT-DERIVED for rendering only. The HRM " +
+      "exposes no spatial embedding, so these coordinates carry no measured " +
+      "geometry: distance between points is not a distance in the memory space, " +
+      "and no relationship may be inferred from proximity.",
+  };
 
-  const perCluster = Math.ceil(totalMemories / nc);
+  const skipLinkInfo = {
+    available: false,
+    // The scalar count IS real — report it, just never expand it into edges.
+    total_skip_links: Number.isFinite(Number(consciousness.total_skip_links))
+      ? Number(consciousness.total_skip_links)
+      : null,
+    note:
+      "`observe --json` carries no skip-link edge list — only the scalar " +
+      "consciousness.total_skip_links and an empty topology.strongest_links. " +
+      "Edges are therefore not reported. Earlier versions synthesized them from " +
+      "the distance between layout positions; those were fabrications.",
+  };
 
-  for (let ci = 0; ci < nc; ci++) {
+  const counters = {
+    // Deliberately reported side by side: these two are known to disagree.
+    clusters_block_num_clusters: Number.isFinite(Number(observe?.clusters?.num_clusters))
+      ? Number(observe.clusters.num_clusters)
+      : null,
+    consciousness_num_clusters: Number.isFinite(Number(consciousness.num_clusters))
+      ? Number(consciousness.num_clusters)
+      : null,
+    consciousness_total_memories: Number.isFinite(Number(consciousness.total_memories))
+      ? Number(consciousness.total_memories)
+      : null,
+  };
+
+  // Zero clusters is a real state (HRM not yet consolidated), and an empty
+  // constellation is the correct answer for it — never one fabricated cluster
+  // holding every memory. This preserves #24's fix as the floor.
+  if (rawClusters.length === 0) {
+    return {
+      memories,
+      clusters,
+      skip_links: skipLinks,
+      num_clusters: 0,
+      total_memories: 0,
+      layout,
+      skip_links_info: skipLinkInfo,
+      counters,
+      timestamp: observe?.timestamp ?? null,
+    };
+  }
+
+  const nc = rawClusters.length;
+
+  rawClusters.forEach((c: any, ci: number) => {
     const theta = Math.acos(1 - 2 * (ci + 0.5) / nc);
     const phi = PHI_ANGLE * ci;
     const r = 3.0;
@@ -273,40 +347,62 @@ function generateConstellation(status: {total_memories: number, num_clusters: nu
     const cy = Math.cos(theta) * r * 0.6;
     const cz = Math.sin(theta) * Math.sin(phi) * r;
 
-    const count = Math.min(perCluster, totalMemories - memories.length);
-    clusters.push({ id: ci, count, coherence: status.phi, center: { x: cx, y: cy, z: cz } });
-    
+    // Real membership. Only actual member ids become points — a cluster whose
+    // members the HRM did not report contributes none rather than `size`
+    // invented dots, which is exactly the fabrication this issue removes.
+    const memberIds: string[] = Array.isArray(c?.member_ids) ? c.member_ids : [];
+    const rawSize = Number(c?.size);
+    const size = Number.isFinite(rawSize) && rawSize >= 0 ? Math.floor(rawSize) : null;
+    // Fall back to the cluster's array index only when the HRM omits an id, so
+    // `cluster_id` on a memory point always resolves to a cluster in the list.
+    const clusterId = Number.isFinite(Number(c?.cluster_id)) ? Number(c.cluster_id) : ci;
+
+    clusters.push({
+      // `id` retained alongside `cluster_id` for renderers keyed on the old field.
+      id: clusterId,
+      cluster_id: clusterId,
+      size,
+      // How many points this cluster actually contributed. Differs from `size`
+      // when member ids are absent; the pair makes that visible.
+      plotted_members: memberIds.length,
+      members_known: memberIds.length > 0,
+      theme: c?.theme ?? null,
+      order_parameter: Number.isFinite(Number(c?.order_parameter)) ? Number(c.order_parameter) : null,
+      coherence: Number.isFinite(Number(c?.coherence)) ? Number(c.coherence) : null,
+      mean_amplitude: Number.isFinite(Number(c?.mean_amplitude)) ? Number(c.mean_amplitude) : null,
+      center: { x: cx, y: cy, z: cz },
+    });
+
+    const count = memberIds.length;
     for (let mi = 0; mi < count; mi++) {
       const mTheta = Math.acos(1 - 2 * (mi + 0.5) / Math.max(count, 1));
       const mPhi = PHI_ANGLE * mi;
       memories.push({
+        id: memberIds[mi],
         x: cx + Math.sin(mTheta) * Math.cos(mPhi) * 0.8,
         y: cy + Math.cos(mTheta) * 0.4,
         z: cz + Math.sin(mTheta) * Math.sin(mPhi) * 0.8,
         size: 0.3 + (((mi * 7 + ci * 13) % 100) / 100) * 0.4,
-        cluster_id: ci,
+        cluster_id: clusterId,
       });
     }
-  }
-  
-  // Inter-cluster links based on proximity
-  for (let i = 0; i < clusters.length; i++) {
-    for (let j = i + 1; j < clusters.length; j++) {
-      const d = Math.sqrt(
-        (clusters[i].center.x - clusters[j].center.x) ** 2 +
-        (clusters[i].center.y - clusters[j].center.y) ** 2 +
-        (clusters[i].center.z - clusters[j].center.z) ** 2
-      );
-      const strength = Math.max(0, 1.0 - d / 10.0) * 0.5;
-      if (strength > 0.05) {
-        const fromBase = clusters.slice(0, i).reduce((s, c) => s + c.count, 0);
-        const toBase = clusters.slice(0, j).reduce((s, c) => s + c.count, 0);
-        skipLinks.push({ from: fromBase, to: toBase, strength });
-      }
-    }
-  }
-  
-  return { memories, clusters, skip_links: skipLinks };
+  });
+
+  return {
+    memories,
+    clusters,
+    // Never synthesized. See skip_links_info.
+    skip_links: skipLinks,
+    num_clusters: clusters.length,
+    // Points actually plotted — NOT consciousness.total_memories, which counts
+    // memories that may not belong to any reported cluster. The HRM-wide total
+    // is available under `counters` for anyone who wants it.
+    total_memories: memories.length,
+    layout,
+    skip_links_info: skipLinkInfo,
+    counters,
+    timestamp: observe?.timestamp ?? null,
+  };
 }
 
 async function runOrchestrate(
@@ -777,31 +873,27 @@ server.tool(
 
 server.tool(
   "kannaka_constellation",
-  "Generate 3D constellation data for HRM visualization (memories as points, clusters as groups, skip links as edges).",
+  "Generate 3D constellation data for HRM visualization from real cluster data (memories as points, clusters as groups). Positions are layout-derived; skip links are not reported because the HRM exposes no edge list.",
   {},
   async () => {
-    // Get status first to build constellation
-    const { stdout: statusOutput, stderr, isError } = await runKannaka(["status"]);
-
-    if (isError) {
-      return { content: [{ type: "text" as const, text: `Error: ${stderr}` }], isError: true };
+    // Real cluster data via observe (+ observe-cache fallback), not `status`
+    // counters — see generateConstellation.
+    const obsResult = await loadObserve();
+    if (!obsResult.ok) {
+      return { content: [{ type: "text" as const, text: `Error: ${obsResult.error} (cache: ${obsResult.cacheError})` }], isError: true };
     }
 
     try {
-      const status = JSON.parse(statusOutput);
-      const constellation = generateConstellation({
-        total_memories: status.total_memories || 0,
-        num_clusters: status.num_clusters ?? 0,
-        phi: status.phi || 0.0
-      });
+      const observe = JSON.parse(obsResult.stdout);
+      const constellation = generateConstellation(observe);
 
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(constellation, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ ...constellation, source: obsResult.source }, null, 2) }],
         isError: false
       };
     } catch (parseError) {
       return {
-        content: [{ type: "text" as const, text: `Error parsing status: ${parseError}` }],
+        content: [{ type: "text" as const, text: `Error parsing observe: ${parseError}` }],
         isError: true
       };
     }
@@ -1183,24 +1275,22 @@ async function createHttpServer() {
         }
       }
       else if (pathname === '/api/hrm/constellation') {
-        const { stdout: statusOutput, stderr, isError } = await runKannaka(["status"]);
-        
-        if (isError) {
+        // Real cluster data via observe (+ observe-cache fallback), not `status`
+        // counters — see generateConstellation.
+        const obsResult = await loadObserve();
+
+        if (!obsResult.ok) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: stderr }));
+          res.end(JSON.stringify({ error: obsResult.error, cacheError: obsResult.cacheError }));
           return;
         }
-        
+
         try {
-          const status = JSON.parse(statusOutput);
-          const constellation = generateConstellation({
-            total_memories: status.total_memories || 0,
-            num_clusters: status.num_clusters ?? 0,
-            phi: status.phi || 0.0
-          });
-          
+          const observe = JSON.parse(obsResult.stdout);
+          const constellation = generateConstellation(observe);
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(constellation));
+          res.end(JSON.stringify({ ...constellation, source: obsResult.source }));
         } catch (parseError) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Parse error: ${parseError}` }));
