@@ -20,11 +20,39 @@ COST_POLL_INTERVAL="${COST_POLL_INTERVAL:-15}"
 # slack is required; at the default poll interval this is ~60s.
 SCHEDULER_COST_GRACE_POLLS="${SCHEDULER_COST_GRACE_POLLS:-4}"
 
+# Sandbox modes Codex accepts, mirroring the allowlist in lib/dispatch.sh.
+RUNNER_ALLOWED_SANDBOXES="workspace-write write read-only"
+RUNNER_DEFAULT_SANDBOX="workspace-write"
+
 # Metrics base for a job workspace. Both the runner (reader) and orchestrate's
 # metrics-tracker (writer) must resolve to this same directory, or the cost
 # ceiling silently measures a file nobody writes.
 runner_metrics_base() {
     echo "${1}/.kannaktopus"
+}
+
+# Sandbox a job should run under. Prints the mode and returns 0 when the job
+# either declares a supported one or declares none; prints nothing and returns
+# 1 when it declares something unsupported, so the caller refuses the run
+# instead of silently substituting a wider sandbox.
+runner_resolve_sandbox() {
+    local job_file="$1"
+    local declared
+    declared=$(jq -r '.security.sandbox // ""' "$job_file" 2>/dev/null)
+
+    if [[ -z "$declared" || "$declared" == "null" ]]; then
+        echo "$RUNNER_DEFAULT_SANDBOX"
+        return 0
+    fi
+
+    local allowed
+    for allowed in $RUNNER_ALLOWED_SANDBOXES; do
+        if [[ "$declared" == "$allowed" ]]; then
+            echo "$declared"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Would orchestrate.sh accept this path as CLAUDE_OCTOPUS_WORKSPACE?
@@ -93,7 +121,22 @@ EOF
     # Set up environment for the job
     export OCTOPUS_JOB_ID="$job_id"
     export OCTOPUS_RUN_ID="$run_id"
-    export OCTOPUS_CODEX_SANDBOX="${OCTOPUS_CODEX_SANDBOX:-workspace-write}"
+
+    # The job file is the authority on its own sandbox. An unrecognised value
+    # refuses the run rather than being coerced to a default, and the ambient
+    # OCTOPUS_CODEX_SANDBOX is overridden rather than deferred to — inheriting
+    # it would let the daemon's environment silently widen a job's sandbox.
+    local sandbox
+    if ! sandbox=$(runner_resolve_sandbox "$job_file"); then
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SANDBOX REFUSED: job declares security.sandbox='$(jq -r '.security.sandbox // ""' "$job_file")', which is not one of: ${RUNNER_ALLOWED_SANDBOXES}. Refusing to run rather than downgrading to a wider sandbox." >> "$log_file"
+        runner_record_finish "$run_id" "$job_id" "$start_time" 78 0 "sandbox_refused" true
+        flock -u 200
+        exec 200>&-
+        unset OCTOPUS_JOB_ID OCTOPUS_RUN_ID
+        return 1
+    fi
+    export OCTOPUS_CODEX_SANDBOX="$sandbox"
+
     if [[ "$max_cost_per_run" != "0" ]] && [[ "$max_cost_per_run" != "null" ]]; then
         export OCTOPUS_MAX_COST_USD="$max_cost_per_run"
     fi

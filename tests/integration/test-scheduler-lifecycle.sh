@@ -449,6 +449,76 @@ for bad in 'C:\Users\nickf\jobspace' "/etc/passwd" "${HOME}/../evil" "${HOME}/a 
 done
 [[ "$guard_ok" == true ]] && pass "Workspace export guard withholds drive/traversal/outside/metachar paths"
 
+# --- Declared sandbox must be honoured or refused, never downgraded (issue #83) ---
+echo ""
+echo "--- Sandbox (fail-closed) ---"
+
+eval "$(grep -E '^RUNNER_(ALLOWED_SANDBOXES|DEFAULT_SANDBOX)=' "${PROJECT_ROOT}/scripts/scheduler/runner.sh")"
+eval "$(sed -n '/^runner_resolve_sandbox()/,/^}/p' "${PROJECT_ROOT}/scripts/scheduler/runner.sh")"
+
+# Without this the "unsupported values are refused" assertion below passes for
+# the wrong reason: a missing function also returns non-zero.
+if declare -F runner_resolve_sandbox > /dev/null; then
+    pass "runner_resolve_sandbox is defined"
+else
+    fail "runner_resolve_sandbox is not defined — sandbox is unenforced"
+fi
+
+SBX_DIR="${SCHEDULER_DIR}/sandboxprobe"; mkdir -p "$SBX_DIR"
+sbx_job() { # $1 = sandbox value, or empty for "declares nothing"
+    local f="${SBX_DIR}/job-${2}.json"
+    if [[ -n "$1" ]]; then
+        echo "$VALID_JOB" | jq --arg s "$1" '.security.sandbox = $s' > "$f"
+    else
+        echo "$VALID_JOB" | jq 'del(.security.sandbox)' > "$f"
+    fi
+    echo "$f"
+}
+
+# Each supported mode must survive to the child unchanged.
+sbx_ok=true
+for mode in workspace-write write read-only; do
+    got=$(runner_resolve_sandbox "$(sbx_job "$mode" "$mode")") || got="<refused>"
+    [[ "$got" == "$mode" ]] || { fail "Declared sandbox '$mode' resolved to '$got'"; sbx_ok=false; }
+done
+[[ "$sbx_ok" == true ]] && pass "Declared sandbox modes resolve unchanged"
+
+# Declaring nothing is not a failed declaration — it takes the documented default.
+got=$(runner_resolve_sandbox "$(sbx_job "" none)") || got="<refused>"
+if [[ "$got" == "workspace-write" ]]; then
+    pass "Undeclared sandbox falls back to the documented default"
+else
+    fail "Undeclared sandbox resolved to '$got' (expected workspace-write)"
+fi
+
+# An unsupported value must refuse, never silently widen to a permissive mode.
+refuse_ok=true
+for bad in yolo-full-access read_only "" ; do
+    [[ -z "$bad" ]] && continue
+    if got=$(runner_resolve_sandbox "$(sbx_job "$bad" "bad")"); then
+        fail "Unsupported sandbox '$bad' was accepted as '$got' instead of refused"
+        refuse_ok=false
+    fi
+done
+[[ "$refuse_ok" == true ]] && pass "Unsupported sandbox values are refused, not downgraded"
+
+# And admission should catch it at `add` time rather than at run time.
+# NB: read `.allowed` directly — jq's `//` falls through on `false` as well as
+# `null`, so `.allowed // "true"` would turn a correct rejection into "true".
+result=$(policy_check_security "$(sbx_job "yolo-full-access" "policy")" 2>/dev/null) || true
+if [[ "$(echo "$result" | jq -r '.allowed' 2>/dev/null)" == "false" ]]; then
+    pass "Policy rejects an invalid security.sandbox at admission"
+else
+    fail "Policy admitted an invalid security.sandbox: $result"
+fi
+
+result=$(policy_check_security "$(sbx_job "read-only" "policyok")" 2>/dev/null) || true
+if [[ -z "$result" ]]; then
+    pass "Policy admits a valid security.sandbox"
+else
+    fail "Policy rejected a valid security.sandbox: $result"
+fi
+
 # --- Cleanup ---
 echo ""
 echo "Cleaning up temp HOME: $HOME"

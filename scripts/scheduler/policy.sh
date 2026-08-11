@@ -152,6 +152,20 @@ policy_check_security() {
         fi
     done
 
+    # Sandbox must be one the runner can actually provide. Caught here so a bad
+    # value fails at `add` rather than refusing the run at 3am.
+    local sandbox
+    sandbox=$(jq -r '.security.sandbox // ""' "$job_file" 2>/dev/null)
+    if [[ -n "$sandbox" && "$sandbox" != "null" ]]; then
+        case "$sandbox" in
+            workspace-write|write|read-only) ;;
+            *)
+                echo "{\"allowed\":false,\"reason\":\"Invalid security.sandbox: '$sandbox' (allowed: workspace-write, write, read-only)\"}"
+                return 1
+                ;;
+        esac
+    fi
+
     return 0
 }
 
