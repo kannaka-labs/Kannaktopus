@@ -388,6 +388,67 @@ else
     fail "Run metadata file not created"
 fi
 
+# --- Cost accounting must fail closed (issue #77) ---
+echo ""
+echo "--- Cost Accounting (fail-closed) ---"
+
+# Pull in the cost reader and the workspace-export guard without executing the
+# module (runner.sh needs flock/setsid, which are absent on some dev hosts).
+eval "$(sed -n '/^runner_metrics_base()/,/^}/p'            "${PROJECT_ROOT}/scripts/scheduler/runner.sh")"
+eval "$(sed -n '/^runner_workspace_is_exportable()/,/^}/p' "${PROJECT_ROOT}/scripts/scheduler/runner.sh")"
+eval "$(sed -n '/^runner_get_current_cost()/,/^}/p'        "${PROJECT_ROOT}/scripts/scheduler/runner.sh")"
+
+COST_WS="${HOME}/costprobe"
+
+# A genuinely-zero reading must stay readable — it is not the same as "unknown".
+mkdir -p "${COST_WS}/zero/.kannaktopus"
+printf '{"totals":{"estimated_cost_usd":0}}\n' > "${COST_WS}/zero/.kannaktopus/metrics-session.json"
+if cost=$(runner_get_current_cost "${COST_WS}/zero") && [[ "$cost" == "0" ]]; then
+    pass "Cost reader reports a genuine \$0 as known"
+else
+    fail "Cost reader failed on a genuine zero reading (got '${cost:-}')"
+fi
+
+mkdir -p "${COST_WS}/real/.kannaktopus"
+printf '{"totals":{"estimated_cost_usd":12.34}}\n' > "${COST_WS}/real/.kannaktopus/metrics-session.json"
+if cost=$(runner_get_current_cost "${COST_WS}/real") && [[ "$cost" == "12.34" ]]; then
+    pass "Cost reader reports a real spend"
+else
+    fail "Cost reader wrong on real spend (got '${cost:-}')"
+fi
+
+# Every unreadable shape must be UNKNOWN, never \$0 — returning 0 here is what
+# let a misdirected metrics path spend past its ceiling unnoticed.
+mkdir -p "${COST_WS}/absent"
+mkdir -p "${COST_WS}/empty/.kannaktopus";   : > "${COST_WS}/empty/.kannaktopus/metrics-session.json"
+mkdir -p "${COST_WS}/garbage/.kannaktopus"; printf 'not json' > "${COST_WS}/garbage/.kannaktopus/metrics-session.json"
+mkdir -p "${COST_WS}/nofield/.kannaktopus"; printf '{"totals":{}}\n' > "${COST_WS}/nofield/.kannaktopus/metrics-session.json"
+unknown_ok=true
+for shape in absent empty garbage nofield; do
+    if runner_get_current_cost "${COST_WS}/${shape}" >/dev/null 2>&1; then
+        fail "Cost reader treated '${shape}' metrics as a known cost (fails open)"
+        unknown_ok=false
+    fi
+done
+[[ "$unknown_ok" == true ]] && pass "Cost reader reports absent/empty/garbage/no-field metrics as unknown"
+
+# The export guard must never hand orchestrate a path its own validator rejects
+# (lib/validation.sh requires POSIX-absolute under \$HOME|/tmp|/var/tmp).
+if runner_workspace_is_exportable "${HOME}/jobspace" && runner_workspace_is_exportable "/tmp/jobspace"; then
+    pass "Workspace export guard accepts safe POSIX workspaces"
+else
+    fail "Workspace export guard rejected a safe workspace"
+fi
+
+guard_ok=true
+for bad in 'C:\Users\nickf\jobspace' "/etc/passwd" "${HOME}/../evil" "${HOME}/a b" "${HOME}/a;rm"; do
+    if runner_workspace_is_exportable "$bad"; then
+        fail "Workspace export guard would export an unsafe path: $bad"
+        guard_ok=false
+    fi
+done
+[[ "$guard_ok" == true ]] && pass "Workspace export guard withholds drive/traversal/outside/metachar paths"
+
 # --- Cleanup ---
 echo ""
 echo "Cleaning up temp HOME: $HOME"

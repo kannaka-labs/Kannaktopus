@@ -13,7 +13,40 @@ source "${SCRIPT_DIR}/policy.sh"
 
 ORCHESTRATE_SH="${PLUGIN_DIR}/scripts/orchestrate.sh"
 LOCK_FILE="${RUNTIME_DIR}/orchestrate.lock"
-COST_POLL_INTERVAL=15
+COST_POLL_INTERVAL="${COST_POLL_INTERVAL:-15}"
+
+# Polls to wait for metrics to appear before treating a cost-limited run as
+# unaccounted. Metrics do not exist for the first moments of a run, so some
+# slack is required; at the default poll interval this is ~60s.
+SCHEDULER_COST_GRACE_POLLS="${SCHEDULER_COST_GRACE_POLLS:-4}"
+
+# Metrics base for a job workspace. Both the runner (reader) and orchestrate's
+# metrics-tracker (writer) must resolve to this same directory, or the cost
+# ceiling silently measures a file nobody writes.
+runner_metrics_base() {
+    echo "${1}/.kannaktopus"
+}
+
+# Would orchestrate.sh accept this path as CLAUDE_OCTOPUS_WORKSPACE?
+# validate_workspace_path() in lib/validation.sh requires a POSIX-absolute path
+# under $HOME|/tmp|/var/tmp and rejects traversal, so a Windows drive path fails
+# it. Answers conservatively: a "no" only costs us the workspace alignment,
+# never the cost accounting.
+runner_workspace_is_exportable() {
+    local path="$1"
+    [[ -n "$path" && "$path" != "null" ]] || return 1
+    [[ "$path" != *".."* ]] || return 1
+    # Allowlist rather than a metacharacter blocklist: being stricter than the
+    # validator only costs us the workspace alignment, while being looser would
+    # export a path orchestrate then rejects, aborting the job.
+    [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+    [[ "$path" == /* ]] || return 1
+    local prefix
+    for prefix in "$HOME" "/tmp" "/var/tmp"; do
+        [[ -n "$prefix" && "$path" == "$prefix"* ]] && return 0
+    done
+    return 1
+}
 
 # Run a job. Args: job_file
 # Returns: 0 on success, 1 on failure
@@ -65,6 +98,27 @@ EOF
         export OCTOPUS_MAX_COST_USD="$max_cost_per_run"
     fi
 
+    # Point the metrics writer at the same file the monitor loop reads.
+    # METRICS_BASE wins over WORKSPACE_DIR in metrics-tracker.sh and is not
+    # subject to workspace validation, so it holds on every platform and
+    # regardless of CLAUDE_PLUGIN_DATA (which outranks CLAUDE_OCTOPUS_WORKSPACE
+    # in orchestrate.sh and would otherwise redirect metrics silently).
+    local metrics_base
+    metrics_base=$(runner_metrics_base "$workspace")
+    export METRICS_BASE="$metrics_base"
+    mkdir -p "$metrics_base"
+
+    # Align orchestrate's workspace too, but only when the path satisfies the
+    # validator orchestrate applies to it (POSIX-absolute, under $HOME|/tmp|
+    # /var/tmp). A Windows drive path is a legitimate scheduler workspace and
+    # would be rejected there, aborting the job — so it is left unset and only
+    # METRICS_BASE governs the cost ceiling.
+    if runner_workspace_is_exportable "$workspace"; then
+        export CLAUDE_OCTOPUS_WORKSPACE="$workspace"
+    else
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] NOTE: workspace not exportable to orchestrate (not under \$HOME|/tmp|/var/tmp); METRICS_BASE=${metrics_base} still governs cost accounting" >> "$log_file"
+    fi
+
     # Spawn orchestrate.sh in its own process group via setsid
     local child_pid
     (
@@ -78,6 +132,7 @@ EOF
     # Monitor loop: check timeout, cost, and kill switches
     local elapsed=0
     local poll_counter=0
+    local unaccounted_polls=0
     while kill -0 "$child_pid" 2>/dev/null; do
         sleep 1
         elapsed=$((elapsed + 1))
@@ -102,16 +157,34 @@ EOF
         # Cost polling (every COST_POLL_INTERVAL seconds)
         if (( poll_counter >= COST_POLL_INTERVAL )); then
             poll_counter=0
-            final_cost=$(runner_get_current_cost "$workspace")
 
-            if [[ "$max_cost_per_run" != "0" ]] && [[ "$max_cost_per_run" != "null" ]]; then
-                local over
-                over=$(awk -v cost="$final_cost" -v limit="$max_cost_per_run" \
-                    'BEGIN { print (cost + 0 >= limit + 0) ? "yes" : "no" }')
-                if [[ "$over" == "yes" ]]; then
-                    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] COST LIMIT: \$${final_cost} >= \$${max_cost_per_run}" >> "$log_file"
+            local cost_now
+            if cost_now=$(runner_get_current_cost "$workspace"); then
+                final_cost="$cost_now"
+                unaccounted_polls=0
+
+                if [[ "$max_cost_per_run" != "0" ]] && [[ "$max_cost_per_run" != "null" ]]; then
+                    local over
+                    over=$(awk -v cost="$final_cost" -v limit="$max_cost_per_run" \
+                        'BEGIN { print (cost + 0 >= limit + 0) ? "yes" : "no" }')
+                    if [[ "$over" == "yes" ]]; then
+                        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] COST LIMIT: \$${final_cost} >= \$${max_cost_per_run}" >> "$log_file"
+                        runner_kill_process_group "$child_pid"
+                        exit_code=125
+                        break
+                    fi
+                fi
+            elif [[ "$max_cost_per_run" != "0" ]] && [[ "$max_cost_per_run" != "null" ]]; then
+                # Spend is unknown while a ceiling is in force. Tolerate it
+                # briefly (metrics do not exist yet at startup), then fail
+                # closed — a limit that cannot measure is not a limit.
+                unaccounted_polls=$((unaccounted_polls + 1))
+                echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARNING: cost unaccounted (${unaccounted_polls}/${SCHEDULER_COST_GRACE_POLLS}) — no readable spend at $(runner_metrics_base "$workspace")/metrics-session.json while \$${max_cost_per_run} limit is in force" >> "$log_file"
+
+                if (( unaccounted_polls >= SCHEDULER_COST_GRACE_POLLS )); then
+                    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] COST UNACCOUNTED: killing job — spend could not be measured for ${unaccounted_polls} polls, so the \$${max_cost_per_run} ceiling cannot be enforced. Check that orchestrate writes metrics to $(runner_metrics_base "$workspace")" >> "$log_file"
                     runner_kill_process_group "$child_pid"
-                    exit_code=125
+                    exit_code=126
                     break
                 fi
             fi
@@ -127,10 +200,16 @@ EOF
     flock -u 200
     exec 200>&-
 
-    # Final cost reading
-    final_cost=$(runner_get_current_cost "$workspace")
+    # Final cost reading. An unreadable figure is recorded as unaccounted
+    # rather than as $0, so the daily ledger's shortfall stays visible.
+    local cost_accounted=true
+    if ! final_cost=$(runner_get_current_cost "$workspace"); then
+        final_cost=0
+        cost_accounted=false
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARNING: final spend unaccounted — ledger will under-report this run" >> "$log_file"
+    fi
 
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Job finished: exit_code=$exit_code, cost=\$${final_cost}" >> "$log_file"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Job finished: exit_code=$exit_code, cost=\$${final_cost}, accounted=${cost_accounted}" >> "$log_file"
 
     # Determine status
     local status="completed"
@@ -138,11 +217,12 @@ EOF
         0)   status="completed" ;;
         124) status="timeout" ;;
         125) status="cost_limit" ;;
+        126) status="cost_unaccounted" ;;
         130) status="killed" ;;
         *)   status="failed" ;;
     esac
 
-    runner_record_finish "$run_id" "$job_id" "$start_time" "$exit_code" "$final_cost" "$status"
+    runner_record_finish "$run_id" "$job_id" "$start_time" "$exit_code" "$final_cost" "$status" "$cost_accounted"
 
     # Clean up env
     unset OCTOPUS_JOB_ID OCTOPUS_RUN_ID
@@ -162,30 +242,38 @@ runner_kill_process_group() {
     wait "$pid" 2>/dev/null || true
 }
 
-# Read current cost from metrics-session.json in workspace
+# Read current cost from metrics-session.json in the job's metrics base.
+# Prints the cost and returns 0 when the spend is genuinely known; prints
+# nothing and returns 1 when it is UNKNOWN (file absent, empty, unparseable,
+# or missing the field). The distinction is the fix: reporting 0 for an
+# unreadable file is what let a broken metrics path read as "spent nothing".
 runner_get_current_cost() {
     local workspace="$1"
-    local metrics_file="${workspace}/.kannaktopus/metrics-session.json"
+    local metrics_file
+    metrics_file="$(runner_metrics_base "$workspace")/metrics-session.json"
 
-    if [[ -f "$metrics_file" ]]; then
-        jq -r '.totals.estimated_cost_usd // 0' "$metrics_file" 2>/dev/null || echo "0"
-    else
-        echo "0"
-    fi
+    [[ -s "$metrics_file" ]] || return 1
+
+    local cost
+    cost=$(jq -er '.totals.estimated_cost_usd' "$metrics_file" 2>/dev/null) || return 1
+    [[ "$cost" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || return 1
+
+    echo "$cost"
 }
 
 # Record run finish
 runner_record_finish() {
     local run_id="$1" job_id="$2" start_time="$3" exit_code="$4" cost="$5" status="$6"
+    local cost_accounted="${7:-true}"
     local end_time
     end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     local run_data
     run_data=$(cat <<EOF
-{"run_id":"${run_id}","job_id":"${job_id}","status":"${status}","started_at":"${start_time}","ended_at":"${end_time}","exit_code":${exit_code},"cost_usd":${cost}}
+{"run_id":"${run_id}","job_id":"${job_id}","status":"${status}","started_at":"${start_time}","ended_at":"${end_time}","exit_code":${exit_code},"cost_usd":${cost},"cost_accounted":${cost_accounted}}
 EOF
 )
     save_run "$run_id" "$run_data"
     update_ledger "$cost" "$job_id"
-    append_event "{\"event\":\"run_finished\",\"run_id\":\"${run_id}\",\"job_id\":\"${job_id}\",\"status\":\"${status}\",\"exit_code\":${exit_code},\"cost_usd\":${cost},\"timestamp\":\"${end_time}\"}"
+    append_event "{\"event\":\"run_finished\",\"run_id\":\"${run_id}\",\"job_id\":\"${job_id}\",\"status\":\"${status}\",\"exit_code\":${exit_code},\"cost_usd\":${cost},\"cost_accounted\":${cost_accounted},\"timestamp\":\"${end_time}\"}"
 }
