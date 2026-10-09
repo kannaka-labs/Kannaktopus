@@ -408,15 +408,30 @@ save_session_checkpoint() {
     update_metrics "phases_completed" "1" 2>/dev/null || true
     write_state_md 2>/dev/null || true
 
+    local workflow_name
+    workflow_name=$(jq -r '.workflow // "unknown"' "$SESSION_FILE" 2>/dev/null || echo "unknown")
+
     # v8.57: Notify claude-mem of phase completion (non-blocking, fault-tolerant)
     local bridge_script="${SCRIPT_DIR}/claude-mem-bridge.sh"
     if [[ -x "$bridge_script" ]] && "$bridge_script" available >/dev/null 2>&1; then
-        local workflow_name
-        workflow_name=$(jq -r '.workflow // "unknown"' "$SESSION_FILE" 2>/dev/null || echo "unknown")
         "$bridge_script" observe "decision" \
             "Octopus ${phase} phase ${status}" \
             "Workflow: ${workflow_name}, Phase: ${phase}, Status: ${status}, Output: ${output_file}" \
             2>/dev/null &
+    fi
+
+    # Persist the same checkpoint into Kannaka HRM (#104) — the advertised
+    # memory layer — so it does not depend on an optional claude-mem worker.
+    # Best effort, exactly like the claude-mem call: backgrounded, output
+    # discarded, and nothing here can fail the phase. Invoked through bash so
+    # it does not depend on the script's executable bit. `available` always
+    # exits 0 and prints true/false, so its output is what is checked.
+    local hrm_bridge="${SCRIPT_DIR}/kannaka-bridge.sh"
+    if [[ -f "$hrm_bridge" ]] && [[ "$(bash "$hrm_bridge" available 2>/dev/null || true)" == "true" ]]; then
+        bash "$hrm_bridge" absorb \
+            "Octopus ${phase} phase ${status}. Workflow: ${workflow_name}, Phase: ${phase}, Status: ${status}, Output: ${output_file}" \
+            "0.5" "coding" "kannaktopus-checkpoint" "workflow:${workflow_name}" "phase:${phase}" \
+            >/dev/null 2>&1 &
     fi
 
     log DEBUG "Checkpoint saved: $phase ($status)"

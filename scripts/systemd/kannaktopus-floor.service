@@ -9,6 +9,9 @@ WorkingDirectory=/opt/kannaktopus
 ExecStart=/usr/bin/env python3 /opt/kannaktopus/scripts/kannaktopus_floor.py
 Restart=always
 RestartSec=5
+# Exit 2 = configuration error (invalid KANNAKTOPUS_ARM_ID, missing
+# websockets); restarting cannot fix it, so do not loop on it.
+RestartPreventExitStatus=2
 
 # Public radio by default. Override to wss://your-host or ws://localhost:8888
 # for local development.

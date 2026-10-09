@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve, dirname, delimiter as pathDelimiter } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { Type, type TSchema, type Static } from "@sinclair/typebox";
 import { loadSkills } from "./skill-loader.js";
 
@@ -259,6 +259,63 @@ interface ResolvedConfig {
   orchestrateShPath: string;
   /** Fallback autonomy for workflows invoked without an explicit value. */
   defaultAutonomy: string;
+  /**
+   * Directory every workflow runs in (#86). orchestrate.sh derives
+   * PROJECT_ROOT, REVIEW.md and .octo/config.json from its cwd, so this is the
+   * user's project — PLUGIN_ROOT is only used to locate the script.
+   */
+  workspaceDir: string;
+}
+
+function isExistingDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Read OpenClaw's own agent workspace (`agents.defaults.workspace`), if set. */
+function hostAgentWorkspace(hostConfig: Record<string, unknown> | undefined): string | undefined {
+  const agents = hostConfig?.agents;
+  if (!agents || typeof agents !== "object") return undefined;
+  const defaults = (agents as Record<string, unknown>).defaults;
+  if (!defaults || typeof defaults !== "object") return undefined;
+  const ws = (defaults as Record<string, unknown>).workspace;
+  return typeof ws === "string" && ws.trim() !== "" ? ws.trim() : undefined;
+}
+
+/**
+ * Resolve the directory workflows execute in (#86). Order:
+ *   1. pluginConfig.workspaceDir — explicit; a bad value fails registration
+ *   2. OCTOPUS_PROJECT_DIR — same override the MCP server honours
+ *   3. OpenClaw's agents.defaults.workspace — the agent's active workspace
+ *   4. the gateway's own cwd
+ * The plugin checkout is never chosen on purpose.
+ */
+function resolveWorkspaceDir(api: OpenClawPluginApi, pluginConfig: Record<string, unknown>): string {
+  const configured = pluginConfig.workspaceDir;
+  if (typeof configured === "string" && configured.trim() !== "") {
+    const dir = api.resolvePath(configured.trim());
+    if (!isExistingDir(dir)) {
+      const message = `Kannaktopus: \`workspaceDir\` is configured ("${configured.trim()}") but ${dir} is not an existing directory`;
+      api.logger.error(message);
+      throw new Error(message);
+    }
+    return dir;
+  }
+
+  const candidates: Array<[string, string | undefined]> = [
+    ["OCTOPUS_PROJECT_DIR", process.env.OCTOPUS_PROJECT_DIR?.trim() || undefined],
+    ["agents.defaults.workspace", hostAgentWorkspace(api.config)],
+  ];
+  for (const [source, raw] of candidates) {
+    if (!raw) continue;
+    const dir = api.resolvePath(raw);
+    if (isExistingDir(dir)) return dir;
+    api.logger.warn(`Ignoring ${source} (${dir}): not an existing directory`);
+  }
+  return process.cwd();
 }
 
 // --- Execution ---
@@ -282,7 +339,8 @@ async function executeOrchestrate(
 
   try {
     const { stdout, stderr } = await execFileAsync(launch.file, launch.args, {
-      cwd: PLUGIN_ROOT,
+      // The user's workspace, not the plugin checkout (#86).
+      cwd: config.workspaceDir,
       timeout: 300_000,
       env: {
         // Security: only forward required env vars, not the full process.env
@@ -564,11 +622,14 @@ export default function register(api: OpenClawPluginApi) {
       ? (configuredWorkflows as string[])
       : DEFAULT_ENABLED_WORKFLOWS;
 
-  const config: ResolvedConfig = { orchestrateShPath, defaultAutonomy };
+  const workspaceDir = resolveWorkspaceDir(api, pluginConfig);
+
+  const config: ResolvedConfig = { orchestrateShPath, defaultAutonomy, workspaceDir };
 
   api.logger.info(`Kannaktopus OpenClaw extension loading...`);
   api.logger.info(`Plugin root: ${PLUGIN_ROOT}`);
   api.logger.info(`orchestrate.sh: ${orchestrateShPath}`);
+  api.logger.info(`Workspace: ${workspaceDir}`);
   api.logger.info(`Default autonomy: ${defaultAutonomy}`);
 
   // Register workflow tools

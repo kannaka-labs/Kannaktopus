@@ -81,6 +81,8 @@ The `octopus_set_editor_context` tool lets your IDE pass state into Octopus work
 
 This context is injected as environment variables (`OCTOPUS_IDE_*`) into `orchestrate.sh`. Currently these variables are passed through for future consumption — orchestrate.sh does not yet act on them, but they establish the contract for IDE-aware workflows in a future release. Input validation enforces path safety and a 50KB selection size limit.
 
+`workspace_root` also sets where workflows run: every `octopus_*` workflow is launched with its working directory set to the project, so `orchestrate.sh` resolves `PROJECT_ROOT`, git state and `REVIEW.md` from your project rather than from the Kannaktopus checkout. It must be an absolute path to an existing directory. Without it, the server uses `OCTOPUS_PROJECT_DIR` (set it in the MCP server's `env` when your host knows the project directory), then `CLAUDE_PROJECT_DIR`, and only then the plugin checkout itself.
+
 ## Manual Configuration
 
 If `ide-attach.sh` doesn't support your IDE, you can configure MCP manually.

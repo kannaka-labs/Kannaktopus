@@ -14,7 +14,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve, dirname, delimiter as pathDelimiter } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import { loadSkills } from "./skill-loader.js";
 const execFileAsync = promisify(execFile);
@@ -159,6 +159,58 @@ function assertNoUnsupportedConfig(pluginConfig, logger) {
         throw new Error(message);
     }
 }
+function isExistingDir(p) {
+    try {
+        return statSync(p).isDirectory();
+    }
+    catch {
+        return false;
+    }
+}
+/** Read OpenClaw's own agent workspace (`agents.defaults.workspace`), if set. */
+function hostAgentWorkspace(hostConfig) {
+    const agents = hostConfig?.agents;
+    if (!agents || typeof agents !== "object")
+        return undefined;
+    const defaults = agents.defaults;
+    if (!defaults || typeof defaults !== "object")
+        return undefined;
+    const ws = defaults.workspace;
+    return typeof ws === "string" && ws.trim() !== "" ? ws.trim() : undefined;
+}
+/**
+ * Resolve the directory workflows execute in (#86). Order:
+ *   1. pluginConfig.workspaceDir — explicit; a bad value fails registration
+ *   2. OCTOPUS_PROJECT_DIR — same override the MCP server honours
+ *   3. OpenClaw's agents.defaults.workspace — the agent's active workspace
+ *   4. the gateway's own cwd
+ * The plugin checkout is never chosen on purpose.
+ */
+function resolveWorkspaceDir(api, pluginConfig) {
+    const configured = pluginConfig.workspaceDir;
+    if (typeof configured === "string" && configured.trim() !== "") {
+        const dir = api.resolvePath(configured.trim());
+        if (!isExistingDir(dir)) {
+            const message = `Kannaktopus: \`workspaceDir\` is configured ("${configured.trim()}") but ${dir} is not an existing directory`;
+            api.logger.error(message);
+            throw new Error(message);
+        }
+        return dir;
+    }
+    const candidates = [
+        ["OCTOPUS_PROJECT_DIR", process.env.OCTOPUS_PROJECT_DIR?.trim() || undefined],
+        ["agents.defaults.workspace", hostAgentWorkspace(api.config)],
+    ];
+    for (const [source, raw] of candidates) {
+        if (!raw)
+            continue;
+        const dir = api.resolvePath(raw);
+        if (isExistingDir(dir))
+            return dir;
+        api.logger.warn(`Ignoring ${source} (${dir}): not an existing directory`);
+    }
+    return process.cwd();
+}
 // --- Execution ---
 async function executeOrchestrate(config, command, prompt, flags = [], postFlags = []) {
     const orchestrateSh = config.orchestrateShPath;
@@ -172,7 +224,8 @@ async function executeOrchestrate(config, command, prompt, flags = [], postFlags
     }
     try {
         const { stdout, stderr } = await execFileAsync(launch.file, launch.args, {
-            cwd: PLUGIN_ROOT,
+            // The user's workspace, not the plugin checkout (#86).
+            cwd: config.workspaceDir,
             timeout: 300_000,
             env: {
                 // Security: only forward required env vars, not the full process.env
@@ -385,10 +438,12 @@ export default function register(api) {
     const enabledWorkflows = Array.isArray(configuredWorkflows) && configuredWorkflows.length > 0
         ? configuredWorkflows
         : DEFAULT_ENABLED_WORKFLOWS;
-    const config = { orchestrateShPath, defaultAutonomy };
+    const workspaceDir = resolveWorkspaceDir(api, pluginConfig);
+    const config = { orchestrateShPath, defaultAutonomy, workspaceDir };
     api.logger.info(`Kannaktopus OpenClaw extension loading...`);
     api.logger.info(`Plugin root: ${PLUGIN_ROOT}`);
     api.logger.info(`orchestrate.sh: ${orchestrateShPath}`);
+    api.logger.info(`Workspace: ${workspaceDir}`);
     api.logger.info(`Default autonomy: ${defaultAutonomy}`);
     // Register workflow tools
     let registered = 0;

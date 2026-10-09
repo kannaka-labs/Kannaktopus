@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import sys
 
@@ -44,14 +45,40 @@ log = logging.getLogger("kannaktopus.floor")
 WS_URL = os.environ.get("RADIO_WS_URL", "wss://radio.ninja-portal.com/")
 ARM_ID = os.environ.get("KANNAKTOPUS_ARM_ID", "kannaktopus-01")
 
-# Floor IDs are sanitized server-side: ^[a-z0-9_:.-]{4,40}$. The default
-# arm id 'kannaktopus-01' satisfies this. If you customize, keep it
-# lowercase + within those chars or the radio will mint a random id.
-JOIN_PAYLOAD = json.dumps({
-    "type": "floor_join",
-    "id": ARM_ID,
-    "kind": "agent",
-})
+# The radio's floor server (kannaka-radio server/floor.js sanitizeId) keeps a
+# floor_join id only when it matches /^[a-z0-9_:.-]{4,40}$/i and otherwise
+# silently mints a random one. The floor merges WebSocket agents with swarm
+# agents (QUEEN.phase.<arm_id>) by id, so a replaced id makes one arm count as
+# two (#94). Normalizing here would not help: the swarm side would still use
+# the original id. So an id the server would reject is refused up front.
+# Used with fullmatch(): a Python `$` would also accept a trailing newline,
+# which the JS regex does not. re.ASCII: without it IGNORECASE folds U+212A
+# (Kelvin sign) and U+017F (long s) onto k/s, which the JS regex rejects.
+FLOOR_ID_CHARS = r"[a-z0-9_:.-]"
+FLOOR_ID_RE = re.compile(FLOOR_ID_CHARS + r"{4,40}", re.IGNORECASE | re.ASCII)
+_FLOOR_ID_CHAR_RE = re.compile(FLOOR_ID_CHARS, re.IGNORECASE | re.ASCII)
+
+# Exit status for a configuration error. kannaktopus-floor.service sets
+# RestartPreventExitStatus=2 so systemd does not restart-loop on it.
+EXIT_CONFIG_ERROR = 2
+
+
+def floor_id_error(arm_id: str) -> str | None:
+    """Return why ``arm_id`` would be replaced by the radio, or None if it is kept."""
+    if FLOOR_ID_RE.fullmatch(arm_id):
+        return None
+    if not 4 <= len(arm_id) <= 40:
+        return f"is {len(arm_id)} characters long; the radio floor needs 4-40"
+    bad = sorted({c for c in arm_id if not _FLOOR_ID_CHAR_RE.fullmatch(c)})
+    return "contains characters the radio floor rejects: " + " ".join(repr(c) for c in bad)
+
+
+def join_payload(arm_id: str) -> str:
+    return json.dumps({
+        "type": "floor_join",
+        "id": arm_id,
+        "kind": "agent",
+    })
 
 
 async def _pump(ws) -> None:
@@ -90,7 +117,7 @@ async def _stay_joined(stop: asyncio.Event) -> None:
         ping_timeout=20,
         max_size=2**20,  # 1 MB; the radio chats but never throws huge frames at us.
     ) as ws:
-        await ws.send(JOIN_PAYLOAD)
+        await ws.send(join_payload(ARM_ID))
         log.info("sent floor_join id=%s kind=agent", ARM_ID)
 
         pump = asyncio.ensure_future(_pump(ws))
@@ -120,6 +147,16 @@ async def run() -> int:
         level=os.environ.get("KANNAKTOPUS_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    problem = floor_id_error(ARM_ID)
+    if problem:
+        log.error(
+            "KANNAKTOPUS_ARM_ID %r %s (pattern ^[a-z0-9_:.-]{4,40}$, case-insensitive). "
+            "The radio would replace it with a random id and this arm would count "
+            "twice on the floor. Set KANNAKTOPUS_ARM_ID to a valid id, the same one "
+            "the swarm presence uses. Not joining.",
+            ARM_ID, problem,
+        )
+        return EXIT_CONFIG_ERROR
     log.info("starting floor daemon arm_id=%s url=%s", ARM_ID, WS_URL)
 
     stop = asyncio.Event()

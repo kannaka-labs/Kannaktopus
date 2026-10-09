@@ -26,10 +26,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { resolve, dirname, delimiter as pathDelimiter } from "node:path";
+import { resolve, dirname, isAbsolute, delimiter as pathDelimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile, readdir, access } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
@@ -137,7 +137,17 @@ function resolveHomeDir() {
  * no OS expands a literal `~` for a child process or a fs read.
  */
 function resolveKannakaDataDir() {
-    return process.env.KANNAKA_DATA_DIR || resolve(resolveHomeDir(), ".kannaka");
+    const fromEnv = process.env.KANNAKA_DATA_DIR;
+    if (!fromEnv)
+        return resolve(resolveHomeDir(), ".kannaka");
+    // #97: a config that says `KANNAKA_DATA_DIR=~/.kannaka` must not become a
+    // directory literally named "~" under the working directory.
+    if (fromEnv === "~")
+        return resolveHomeDir();
+    if (fromEnv.startsWith("~/") || fromEnv.startsWith("~\\")) {
+        return resolve(resolveHomeDir(), fromEnv.slice(2));
+    }
+    return fromEnv;
 }
 /**
  * Root of the kannaka-memory checkout that backs the /api/experiments/*
@@ -225,6 +235,23 @@ async function loadObserve() {
         return { ok: false, error: live.stderr || "no data", cacheError: String(e) };
     }
 }
+/**
+ * `kannaka status`, falling back to `status-cache.json` in the data dir the
+ * same way loadObserve falls back to observe-cache.json (#89).
+ */
+async function loadStatus() {
+    const live = await runKannaka(["status"]);
+    if (!live.isError && live.stdout) {
+        return { ok: true, stdout: live.stdout, source: "live" };
+    }
+    try {
+        const cachePath = resolve(resolveKannakaDataDir(), "status-cache.json");
+        return { ok: true, stdout: await readFile(cachePath, "utf-8"), source: "cache" };
+    }
+    catch (e) {
+        return { ok: false, error: live.stderr || "no data", cacheError: String(e) };
+    }
+}
 /** Shape returned by the enriched cluster list (v2 ClusterInfo fields) */
 function mapClusterInfo(c) {
     return {
@@ -260,18 +287,31 @@ async function traverseHrm(start, depth, topK) {
     const edges = [];
     const frontier = [{ q: start, hop: 0 }];
     const seen = new Set();
+    // Every failed hop is recorded rather than silently skipped (#103): a
+    // traversal where no lookup succeeded is an error, not an empty graph, and a
+    // partial traversal says which hops it is missing.
+    const errors = [];
+    let lookups = 0;
     while (frontier.length > 0) {
         const { q, hop } = frontier.shift();
         if (hop >= depth)
             continue;
-        const { stdout, isError } = await runKannaka(["neighbors", q, "--top-k", String(topK), "--json"]);
-        if (isError || !stdout)
+        lookups++;
+        const { stdout, stderr, isError } = await runKannaka(["neighbors", q, "--top-k", String(topK), "--json"]);
+        if (isError || !stdout) {
+            errors.push({ query: q, hop, error: (stderr || "no output from kannaka neighbors").slice(0, 300) });
             continue;
+        }
         let neighbors = [];
         try {
             neighbors = JSON.parse(stdout);
         }
-        catch (_e) {
+        catch (e) {
+            errors.push({ query: q, hop, error: `unparseable neighbors output: ${String(e).slice(0, 200)}` });
+            continue;
+        }
+        if (!Array.isArray(neighbors)) {
+            errors.push({ query: q, hop, error: "neighbors output is not a JSON array" });
             continue;
         }
         for (const n of neighbors) {
@@ -300,7 +340,10 @@ async function traverseHrm(start, depth, topK) {
             }
         }
     }
-    return { nodes: Object.values(nodes), edges };
+    // `failed` only when every lookup failed: partial success still returns the
+    // graph it did build, with `errors` naming the hops that are missing.
+    const failed = lookups > 0 && errors.length === lookups;
+    return { nodes: Object.values(nodes), edges, errors, failed };
 }
 /**
  * Build 3D constellation data from a parsed `observe --json` report (issue #48).
@@ -451,8 +494,58 @@ function generateConstellation(observe) {
         timestamp: observe?.timestamp ?? null,
     };
 }
+/** True when `p` is an absolute path to an existing directory. */
+function isExistingAbsoluteDir(p) {
+    if (!isAbsolute(p))
+        return false;
+    try {
+        return statSync(p).isDirectory();
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * The project a workflow runs against (#95). orchestrate.sh derives
+ * PROJECT_ROOT, git detection and REVIEW.md lookup from its working directory,
+ * so the subprocess cwd must be the caller's project — never the plugin
+ * checkout unless nothing better is known. Order:
+ *   1. workspace_root from octopus_set_editor_context (the IDE's project)
+ *   2. OCTOPUS_PROJECT_DIR — for MCP hosts that know the project directory
+ *   3. CLAUDE_PROJECT_DIR — set by Claude Code for the active project
+ *   4. PLUGIN_ROOT — plugin-maintenance fallback only
+ * An explicitly supplied directory that does not exist is an error rather than
+ * a silent fallback to the plugin checkout.
+ */
+function resolveWorkflowCwd() {
+    const candidates = [
+        ["workspace_root", editorContext.workspaceRoot],
+        ["OCTOPUS_PROJECT_DIR", process.env.OCTOPUS_PROJECT_DIR],
+        ["CLAUDE_PROJECT_DIR", process.env.CLAUDE_PROJECT_DIR],
+    ];
+    for (const [source, raw] of candidates) {
+        const value = raw?.trim();
+        if (!value)
+            continue;
+        if (!isExistingAbsoluteDir(value)) {
+            return {
+                ok: false,
+                error: `${source} '${value}' is not an existing absolute directory; refusing to run the workflow in the plugin checkout instead`,
+            };
+        }
+        return { ok: true, dir: value, source };
+    }
+    return { ok: true, dir: PLUGIN_ROOT, source: "plugin root (no workspace_root, OCTOPUS_PROJECT_DIR or CLAUDE_PROJECT_DIR set)" };
+}
 async function runOrchestrate(command, prompt, flags = [], postFlags = []) {
-    // Global flags MUST come before the command; subcommand flags go after
+    const workspace = resolveWorkflowCwd();
+    if (!workspace.ok) {
+        return { text: `Error executing ${command}: ${workspace.error}`, isError: true };
+    }
+    // Global flags MUST come before the command; subcommand flags go after.
+    // PROJECT_ROOT comes from the cwd set below (orchestrate.sh: PROJECT_ROOT=$PWD);
+    // `-d` is deliberately not used — bash derives PWD in its own path form,
+    // whereas a raw Windows path handed to -d would not be.
     const args = [...flags, command, ...postFlags, prompt];
     // On win32 this becomes `bash <orchestrate.sh> <args…>`; on POSIX the script
     // is exec'd directly, exactly as before.
@@ -462,7 +555,8 @@ async function runOrchestrate(command, prompt, flags = [], postFlags = []) {
     }
     try {
         const { stdout, stderr } = await execFileAsync(launch.file, launch.args, {
-            cwd: PLUGIN_ROOT,
+            // The caller's project, not the plugin checkout (#95).
+            cwd: workspace.dir,
             timeout: 300_000,
             env: {
                 // Security: only forward required env vars, not the full process.env
@@ -523,7 +617,8 @@ async function loadSkillMetadata() {
             continue;
         try {
             const content = await readFile(resolve(skillsDir, file), "utf-8");
-            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            // #101: a skill saved with CRLF line endings has frontmatter too.
+            const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
             if (!frontmatterMatch)
                 continue;
             const fm = frontmatterMatch[1];
@@ -685,6 +780,14 @@ server.tool("octopus_set_editor_context", "Inject IDE editor state (active file,
                 isError: true,
             };
         }
+    }
+    // workspace_root becomes the workflow subprocess cwd (#95), so it must be
+    // a real directory — reject it here rather than at the next workflow call.
+    if (workspace_root && !isExistingAbsoluteDir(workspace_root)) {
+        return {
+            content: [{ type: "text", text: "Error: workspace_root must be an absolute path to an existing directory" }],
+            isError: true,
+        };
     }
     // Truncate oversized selections to prevent env var size exhaustion
     const safeSel = selection && selection.length > MAX_SELECTION_LENGTH
@@ -883,8 +986,14 @@ server.tool("hrm_traverse", "BFS graph traversal through the HRM starting from a
     // Hop-by-hop BFS over the neighbors CLI. Each hop spawns a kannaka
     // invocation — fine for small depth/top_k since the metrics + cluster
     // sidecar caches now make each call cheap (~1-3s).
-    const { nodes, edges } = await traverseHrm(start, depth, top_k);
-    const graph = { nodes, edges, start, depth, top_k };
+    const { nodes, edges, errors, failed } = await traverseHrm(start, depth, top_k);
+    if (failed) {
+        return {
+            content: [{ type: "text", text: `Error: every neighbor lookup failed: ${errors[0]?.error ?? "unknown error"}` }],
+            isError: true,
+        };
+    }
+    const graph = { nodes, edges, start, depth, top_k, ...(errors.length > 0 && { partial: true, errors }) };
     return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }], isError: false };
 });
 // --- Introspection Tools ---
@@ -1111,16 +1220,16 @@ async function createHttpServer() {
         }
         try {
             if (pathname === '/api/hrm/status') {
-                const { stdout, stderr, isError } = await runKannaka(["status"]);
-                if (isError) {
+                const st = await loadStatus();
+                if (!st.ok) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: stderr }));
+                    res.end(JSON.stringify({ error: st.error, cache_error: st.cacheError }));
                     return;
                 }
                 // Validate the CLI output is real JSON before serving it as JSON.
                 try {
-                    const parsed = JSON.parse(stdout);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    const parsed = JSON.parse(st.stdout);
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'X-Kannaka-Source': st.source });
                     res.end(JSON.stringify(parsed));
                 }
                 catch (e) {
@@ -1129,15 +1238,16 @@ async function createHttpServer() {
                 }
             }
             else if (pathname === '/api/hrm/observe') {
-                const { stdout, stderr, isError } = await runKannaka(["observe", "--json"]);
-                if (isError) {
+                // #99: the same observe-cache fallback the MCP tools use.
+                const obs = await loadObserve();
+                if (!obs.ok) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: stderr }));
+                    res.end(JSON.stringify({ error: obs.error, cache_error: obs.cacheError }));
                     return;
                 }
                 try {
-                    const parsed = JSON.parse(stdout);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    const parsed = JSON.parse(obs.stdout);
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'X-Kannaka-Source': obs.source });
                     res.end(JSON.stringify(parsed));
                 }
                 catch (e) {
@@ -1251,9 +1361,15 @@ async function createHttpServer() {
                     return;
                 }
                 // Same BFS as the hrm_traverse MCP tool — one shared implementation.
-                const { nodes, edges } = await traverseHrm(start, depth, topK);
+                const { nodes, edges, errors, failed } = await traverseHrm(start, depth, topK);
+                if (failed) {
+                    // Every lookup failed — a broken backend, not an empty graph (#103).
+                    res.writeHead(502, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'every neighbor lookup failed', errors, start, depth, top_k: topK }));
+                    return;
+                }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ nodes, edges, start, depth, top_k: topK }));
+                res.end(JSON.stringify({ nodes, edges, start, depth, top_k: topK, ...(errors.length > 0 && { partial: true, errors }) }));
             }
             else if (pathname.startsWith('/api/hrm/clusters/')) {
                 // Single cluster details — /api/hrm/clusters/:id
@@ -1323,14 +1439,15 @@ async function createHttpServer() {
             }
             else if (pathname === '/api/experiments/xi') {
                 // Live Xi diversity measurement via research binary
-                const { stdout, stderr, isError } = await runKannaka(["observe", "--json"]);
-                if (isError || !stdout) {
+                // #88: the same observe-cache fallback the MCP tools use.
+                const live = await loadObserve();
+                if (!live.ok) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: stderr || 'No data' }));
+                    res.end(JSON.stringify({ error: live.error || 'No data', cache_error: live.cacheError }));
                     return;
                 }
                 try {
-                    const obs = JSON.parse(stdout);
+                    const obs = JSON.parse(live.stdout);
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({
                         xi: obs.xi,
@@ -1344,7 +1461,7 @@ async function createHttpServer() {
                 }
                 catch {
                     res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(stdout);
+                    res.end(live.stdout);
                 }
             }
             else if (pathname === '/') {
