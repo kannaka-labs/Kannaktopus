@@ -321,13 +321,31 @@ async function traverseHrm(start: string, depth: number, topK: number) {
   const edges: Array<{ source: string; target: string; similarity: number }> = [];
   const frontier: Array<{ q: string; hop: number }> = [{ q: start, hop: 0 }];
   const seen = new Set<string>();
+  // Every failed hop is recorded rather than silently skipped (#103): a
+  // traversal where no lookup succeeded is an error, not an empty graph, and a
+  // partial traversal says which hops it is missing.
+  const errors: Array<{ query: string; hop: number; error: string }> = [];
+  let lookups = 0;
   while (frontier.length > 0) {
     const { q, hop } = frontier.shift()!;
     if (hop >= depth) continue;
-    const { stdout, isError } = await runKannaka(["neighbors", q, "--top-k", String(topK), "--json"]);
-    if (isError || !stdout) continue;
+    lookups++;
+    const { stdout, stderr, isError } = await runKannaka(["neighbors", q, "--top-k", String(topK), "--json"]);
+    if (isError || !stdout) {
+      errors.push({ query: q, hop, error: (stderr || "no output from kannaka neighbors").slice(0, 300) });
+      continue;
+    }
     let neighbors: any[] = [];
-    try { neighbors = JSON.parse(stdout); } catch (_e) { continue; }
+    try {
+      neighbors = JSON.parse(stdout);
+    } catch (e) {
+      errors.push({ query: q, hop, error: `unparseable neighbors output: ${String(e).slice(0, 200)}` });
+      continue;
+    }
+    if (!Array.isArray(neighbors)) {
+      errors.push({ query: q, hop, error: "neighbors output is not a JSON array" });
+      continue;
+    }
     for (const n of neighbors) {
       const id: string = n.id;
       const existing = nodes[id];
@@ -354,7 +372,10 @@ async function traverseHrm(start: string, depth: number, topK: number) {
       }
     }
   }
-  return { nodes: Object.values(nodes), edges };
+  // `failed` only when every lookup failed: partial success still returns the
+  // graph it did build, with `errors` naming the hops that are missing.
+  const failed = lookups > 0 && errors.length === lookups;
+  return { nodes: Object.values(nodes), edges, errors, failed };
 }
 
 /**
@@ -1103,8 +1124,14 @@ server.tool(
     // Hop-by-hop BFS over the neighbors CLI. Each hop spawns a kannaka
     // invocation — fine for small depth/top_k since the metrics + cluster
     // sidecar caches now make each call cheap (~1-3s).
-    const { nodes, edges } = await traverseHrm(start, depth, top_k);
-    const graph = { nodes, edges, start, depth, top_k };
+    const { nodes, edges, errors, failed } = await traverseHrm(start, depth, top_k);
+    if (failed) {
+      return {
+        content: [{ type: "text" as const, text: `Error: every neighbor lookup failed: ${errors[0]?.error ?? "unknown error"}` }],
+        isError: true,
+      };
+    }
+    const graph = { nodes, edges, start, depth, top_k, ...(errors.length > 0 && { partial: true, errors }) };
     return { content: [{ type: "text" as const, text: JSON.stringify(graph, null, 2) }], isError: false };
   }
 );
@@ -1511,9 +1538,15 @@ async function createHttpServer() {
           return;
         }
         // Same BFS as the hrm_traverse MCP tool — one shared implementation.
-        const { nodes, edges } = await traverseHrm(start, depth, topK);
+        const { nodes, edges, errors, failed } = await traverseHrm(start, depth, topK);
+        if (failed) {
+          // Every lookup failed — a broken backend, not an empty graph (#103).
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'every neighbor lookup failed', errors, start, depth, top_k: topK }));
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ nodes, edges, start, depth, top_k: topK }));
+        res.end(JSON.stringify({ nodes, edges, start, depth, top_k: topK, ...(errors.length > 0 && { partial: true, errors }) }));
       }
       else if (pathname.startsWith('/api/hrm/clusters/')) {
         // Single cluster details — /api/hrm/clusters/:id
