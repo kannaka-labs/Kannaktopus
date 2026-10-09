@@ -151,7 +151,15 @@ function resolveHomeDir(): string {
  * no OS expands a literal `~` for a child process or a fs read.
  */
 function resolveKannakaDataDir(): string {
-  return process.env.KANNAKA_DATA_DIR || resolve(resolveHomeDir(), ".kannaka");
+  const fromEnv = process.env.KANNAKA_DATA_DIR;
+  if (!fromEnv) return resolve(resolveHomeDir(), ".kannaka");
+  // #97: a config that says `KANNAKA_DATA_DIR=~/.kannaka` must not become a
+  // directory literally named "~" under the working directory.
+  if (fromEnv === "~") return resolveHomeDir();
+  if (fromEnv.startsWith("~/") || fromEnv.startsWith("~\\")) {
+    return resolve(resolveHomeDir(), fromEnv.slice(2));
+  }
+  return fromEnv;
 }
 
 /**
@@ -254,6 +262,23 @@ async function loadObserve(): Promise<ObserveResult> {
   }
   try {
     const cachePath = resolve(resolveKannakaDataDir(), "observe-cache.json");
+    return { ok: true, stdout: await readFile(cachePath, "utf-8"), source: "cache" };
+  } catch (e) {
+    return { ok: false, error: live.stderr || "no data", cacheError: String(e) };
+  }
+}
+
+/**
+ * `kannaka status`, falling back to `status-cache.json` in the data dir the
+ * same way loadObserve falls back to observe-cache.json (#89).
+ */
+async function loadStatus(): Promise<ObserveResult> {
+  const live = await runKannaka(["status"]);
+  if (!live.isError && live.stdout) {
+    return { ok: true, stdout: live.stdout, source: "live" };
+  }
+  try {
+    const cachePath = resolve(resolveKannakaDataDir(), "status-cache.json");
     return { ok: true, stdout: await readFile(cachePath, "utf-8"), source: "cache" };
   } catch (e) {
     return { ok: false, error: live.stderr || "no data", cacheError: String(e) };
@@ -584,7 +609,8 @@ async function loadSkillMetadata(): Promise<SkillMeta[]> {
     if (!file.endsWith(".md")) continue;
     try {
       const content = await readFile(resolve(skillsDir, file), "utf-8");
-      const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      // #101: a skill saved with CRLF line endings has frontmatter too.
+      const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
       if (!frontmatterMatch) continue;
 
       const fm = frontmatterMatch[1];
@@ -1336,18 +1362,18 @@ async function createHttpServer() {
 
     try {
       if (pathname === '/api/hrm/status') {
-        const { stdout, stderr, isError } = await runKannaka(["status"]);
+        const st = await loadStatus();
 
-        if (isError) {
+        if (!st.ok) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: stderr }));
+          res.end(JSON.stringify({ error: st.error, cache_error: st.cacheError }));
           return;
         }
 
         // Validate the CLI output is real JSON before serving it as JSON.
         try {
-          const parsed = JSON.parse(stdout);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          const parsed = JSON.parse(st.stdout);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'X-Kannaka-Source': st.source });
           res.end(JSON.stringify(parsed));
         } catch (e) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -1355,17 +1381,18 @@ async function createHttpServer() {
         }
       }
       else if (pathname === '/api/hrm/observe') {
-        const { stdout, stderr, isError } = await runKannaka(["observe", "--json"]);
+        // #99: the same observe-cache fallback the MCP tools use.
+        const obs = await loadObserve();
 
-        if (isError) {
+        if (!obs.ok) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: stderr }));
+          res.end(JSON.stringify({ error: obs.error, cache_error: obs.cacheError }));
           return;
         }
 
         try {
-          const parsed = JSON.parse(stdout);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          const parsed = JSON.parse(obs.stdout);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'X-Kannaka-Source': obs.source });
           res.end(JSON.stringify(parsed));
         } catch (e) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -1553,14 +1580,15 @@ async function createHttpServer() {
       }
       else if (pathname === '/api/experiments/xi') {
         // Live Xi diversity measurement via research binary
-        const { stdout, stderr, isError } = await runKannaka(["observe", "--json"]);
-        if (isError || !stdout) {
+        // #88: the same observe-cache fallback the MCP tools use.
+        const live = await loadObserve();
+        if (!live.ok) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: stderr || 'No data' }));
+          res.end(JSON.stringify({ error: live.error || 'No data', cache_error: live.cacheError }));
           return;
         }
         try {
-          const obs = JSON.parse(stdout);
+          const obs = JSON.parse(live.stdout);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             xi: obs.xi,
@@ -1573,7 +1601,7 @@ async function createHttpServer() {
           }));
         } catch {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(stdout);
+          res.end(live.stdout);
         }
       }
       else if (pathname === '/') {
