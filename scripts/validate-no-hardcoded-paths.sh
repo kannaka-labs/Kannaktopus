@@ -18,11 +18,24 @@ echo ""
 
 violations=0
 
+# File types scanned for absolute user paths. .ts is included: the MCP server
+# and OpenClaw sources are TypeScript, and that is where Windows-only paths
+# have actually shipped (#92).
+SCANNED_EXT_RE='\.(md|sh|js|ts|json|yaml)$'
+
+# One denylist for every absolute user-home form (#92):
+#   Unix:    /Users/<name>/   /home/<name>/   (also /mnt/c/Users/..., /c/Users/...)
+#   Windows: C:\Users\<name>  C:/Users/<name>  and the doubled C:\\Users\\<name>
+#            escaping used in JS/TS/JSON string literals. Any drive letter.
+# A Windows match needs a real name character after Users\, so placeholders
+# such as C:\Users\<name> or C:\Users\%USERNAME% in docs do not trip it.
+USER_PATH_RE='/Users/[^/]*/|/home/[^/]*/|[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z0-9._-]+'
+
 # Check for absolute user paths in deployment files (only git-tracked files)
-echo "Checking for absolute user paths (/Users/*, /home/*)..."
-hardcoded_users=$(git ls-files | grep -E "\.(md|sh|js|json|yaml)$" | \
+echo "Checking for absolute user paths (/Users/*, /home/*, C:\\Users\\*)..."
+hardcoded_users=$(git ls-files | grep -E "$SCANNED_EXT_RE" | \
   grep -v "validate-no-hardcoded-paths.sh" | \
-  xargs grep -n "/Users/[^/]*/\|/home/[^/]*/" 2>/dev/null | \
+  xargs grep -nE "$USER_PATH_RE" 2>/dev/null | \
   grep -v "~/" | \
   grep -v "# Example:" | \
   grep -v "# Note:" | \
@@ -32,7 +45,7 @@ if [ -n "$hardcoded_users" ]; then
     echo -e "${RED}✗ Found hardcoded user paths:${NC}"
     echo "$hardcoded_users" | head -10
     echo ""
-    ((violations++))
+    violations=$((violations + 1))
 else
     echo -e "${GREEN}✓ No hardcoded user paths found${NC}"
 fi
@@ -40,9 +53,9 @@ fi
 # Check for specific developer usernames (only git-tracked files)
 echo ""
 echo "Checking for developer usernames..."
-dev_usernames=$(git ls-files | grep -E "\.(md|sh|js|json)$" | \
+dev_usernames=$(git ls-files | grep -E "\.(md|sh|js|ts|json)$" | \
   grep -v "validate-no-hardcoded-paths.sh" | \
-  xargs grep -n "/Users/chris\|/home/chris\|/Users/.*/git/" 2>/dev/null || true)
+  xargs grep -nE '/Users/chris|/home/chris|/Users/.*/git/|[A-Za-z]:[\\/]+Users[\\/]+chris|[A-Za-z]:[\\/]+Users[\\/]+.*[\\/]git[\\/]' 2>/dev/null || true)
 
 if [ -n "$dev_usernames" ]; then
     echo -e "${RED}✗ Found developer username in paths:${NC}"
@@ -51,7 +64,7 @@ if [ -n "$dev_usernames" ]; then
     echo "  First 5 occurrences:"
     echo "$dev_usernames" | head -5
     echo ""
-    ((violations++))
+    violations=$((violations + 1))
 else
     echo -e "${GREEN}✓ No developer usernames in paths${NC}"
 fi
@@ -67,7 +80,7 @@ if [ -n "$git_paths" ]; then
     echo -e "${RED}✗ Found absolute git repository paths:${NC}"
     echo "$git_paths" | wc -l | xargs echo "  Occurrences:"
     echo ""
-    ((violations++))
+    violations=$((violations + 1))
 else
     echo -e "${GREEN}✓ No absolute git repository paths${NC}"
 fi
