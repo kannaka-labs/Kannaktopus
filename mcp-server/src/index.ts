@@ -27,10 +27,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { resolve, dirname, delimiter as pathDelimiter } from "node:path";
+import { resolve, dirname, isAbsolute, delimiter as pathDelimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile, readdir, access } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { createServer, type IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
@@ -542,13 +542,66 @@ function generateConstellation(observe: any) {
   };
 }
 
+/** True when `p` is an absolute path to an existing directory. */
+function isExistingAbsoluteDir(p: string): boolean {
+  if (!isAbsolute(p)) return false;
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+type WorkspaceResolution =
+  | { ok: true; dir: string; source: string }
+  | { ok: false; error: string };
+
+/**
+ * The project a workflow runs against (#95). orchestrate.sh derives
+ * PROJECT_ROOT, git detection and REVIEW.md lookup from its working directory,
+ * so the subprocess cwd must be the caller's project — never the plugin
+ * checkout unless nothing better is known. Order:
+ *   1. workspace_root from octopus_set_editor_context (the IDE's project)
+ *   2. OCTOPUS_PROJECT_DIR — for MCP hosts that know the project directory
+ *   3. CLAUDE_PROJECT_DIR — set by Claude Code for the active project
+ *   4. PLUGIN_ROOT — plugin-maintenance fallback only
+ * An explicitly supplied directory that does not exist is an error rather than
+ * a silent fallback to the plugin checkout.
+ */
+function resolveWorkflowCwd(): WorkspaceResolution {
+  const candidates: Array<[string, string | undefined]> = [
+    ["workspace_root", editorContext.workspaceRoot],
+    ["OCTOPUS_PROJECT_DIR", process.env.OCTOPUS_PROJECT_DIR],
+    ["CLAUDE_PROJECT_DIR", process.env.CLAUDE_PROJECT_DIR],
+  ];
+  for (const [source, raw] of candidates) {
+    const value = raw?.trim();
+    if (!value) continue;
+    if (!isExistingAbsoluteDir(value)) {
+      return {
+        ok: false,
+        error: `${source} '${value}' is not an existing absolute directory; refusing to run the workflow in the plugin checkout instead`,
+      };
+    }
+    return { ok: true, dir: value, source };
+  }
+  return { ok: true, dir: PLUGIN_ROOT, source: "plugin root (no workspace_root, OCTOPUS_PROJECT_DIR or CLAUDE_PROJECT_DIR set)" };
+}
+
 async function runOrchestrate(
   command: string,
   prompt: string,
   flags: string[] = [],
   postFlags: string[] = []
 ): Promise<{ text: string; isError: boolean }> {
-  // Global flags MUST come before the command; subcommand flags go after
+  const workspace = resolveWorkflowCwd();
+  if (!workspace.ok) {
+    return { text: `Error executing ${command}: ${workspace.error}`, isError: true };
+  }
+  // Global flags MUST come before the command; subcommand flags go after.
+  // PROJECT_ROOT comes from the cwd set below (orchestrate.sh: PROJECT_ROOT=$PWD);
+  // `-d` is deliberately not used — bash derives PWD in its own path form,
+  // whereas a raw Windows path handed to -d would not be.
   const args = [...flags, command, ...postFlags, prompt];
   // On win32 this becomes `bash <orchestrate.sh> <args…>`; on POSIX the script
   // is exec'd directly, exactly as before.
@@ -558,7 +611,8 @@ async function runOrchestrate(
   }
   try {
     const { stdout, stderr } = await execFileAsync(launch.file, launch.args, {
-      cwd: PLUGIN_ROOT,
+      // The caller's project, not the plugin checkout (#95).
+      cwd: workspace.dir,
       timeout: 300_000,
       env: {
         // Security: only forward required env vars, not the full process.env
@@ -854,6 +908,15 @@ server.tool(
           isError: true,
         };
       }
+    }
+
+    // workspace_root becomes the workflow subprocess cwd (#95), so it must be
+    // a real directory — reject it here rather than at the next workflow call.
+    if (workspace_root && !isExistingAbsoluteDir(workspace_root)) {
+      return {
+        content: [{ type: "text" as const, text: "Error: workspace_root must be an absolute path to an existing directory" }],
+        isError: true,
+      };
     }
 
     // Truncate oversized selections to prevent env var size exhaustion
