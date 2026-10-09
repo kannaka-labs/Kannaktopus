@@ -14,8 +14,12 @@ SWITCHES_DIR="${SCHEDULER_DIR}/switches"
 
 # Initialize scheduler directory structure
 store_init() {
-    mkdir -p -m 700 "$JOBS_DIR" "$RUNS_DIR" "$RUNTIME_DIR" "$LOGS_DIR" \
+    # #87: `mkdir -m 700` fails outright on NTFS (Git Bash, WSL on /mnt/c).
+    # Create plainly, then tighten where the filesystem allows it.
+    mkdir -p "$JOBS_DIR" "$RUNS_DIR" "$RUNTIME_DIR" "$LOGS_DIR" \
              "$LEDGER_DIR" "$SWITCHES_DIR"
+    chmod 700 "$SCHEDULER_DIR" "$JOBS_DIR" "$RUNS_DIR" "$RUNTIME_DIR" "$LOGS_DIR" \
+              "$LEDGER_DIR" "$SWITCHES_DIR" 2>/dev/null || true
 
     # Initialize daily ledger if missing
     local today

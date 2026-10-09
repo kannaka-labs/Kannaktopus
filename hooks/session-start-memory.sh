@@ -64,10 +64,12 @@ if [[ -n "$AUTONOMY" ]] && command -v jq &>/dev/null; then
            "$SESSION_FILE" > "$TMP" 2>/dev/null && mv "$TMP" "$SESSION_FILE" 2>/dev/null || rm -f "$TMP"
     else
         # Create initial session with restored preferences (jq --arg for safe escaping)
+        # #105: carry the saved providers too, as the update branch above does.
         jq -n \
             --arg autonomy "$AUTONOMY" \
+            --arg providers "${PROVIDERS:-}" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{"autonomy": $autonomy, "restored_from_memory": true, "session_start": $ts}' \
+            '{"autonomy": $autonomy, "restored_from_memory": true, "session_start": $ts} | if $providers != "" then .providers = $providers else . end' \
             > "$SESSION_FILE" 2>/dev/null || true
     fi
 
