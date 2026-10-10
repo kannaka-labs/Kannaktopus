@@ -33,6 +33,7 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { buildRememberArgs, extractXiMetrics, KANNAKA_MODALITIES } from "./kannaka-cli.js";
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(__dirname, "../..");
@@ -831,7 +832,7 @@ server.tool("kannaka_absorb", "Store a memory in the Holographic Resonance Mediu
         .optional()
         .describe("Memory importance (0.0-1.0)"),
     modality: z
-        .enum(["audio", "visual", "semantic", "network", "mixed"])
+        .enum(KANNAKA_MODALITIES)
         .optional()
         .describe("Memory modality type"),
     tags: z
@@ -839,19 +840,8 @@ server.tool("kannaka_absorb", "Store a memory in the Holographic Resonance Mediu
         .optional()
         .describe("Tags to associate with the memory"),
 }, async ({ content, importance, modality, tags }) => {
-    const args = ["remember", content];
-    if (importance !== undefined) {
-        args.push("--importance", importance.toString());
-    }
-    if (modality) {
-        args.push("--category", modality);
-    }
-    if (tags && tags.length > 0) {
-        // HRM binary uses --tag for individual tags
-        for (const tag of tags) {
-            args.push("--tag", tag);
-        }
-    }
+    // --modality and one comma-joined --tags: see buildRememberArgs.
+    const args = buildRememberArgs({ content, importance, modality, tags });
     const { stdout, stderr, isError } = await runKannaka(args);
     const text = isError ? `Error: ${stderr}` : stdout || "Memory absorbed successfully";
     return { content: [{ type: "text", text }], isError };
@@ -1446,23 +1436,12 @@ async function createHttpServer() {
                     res.end(JSON.stringify({ error: live.error || 'No data', cache_error: live.cacheError }));
                     return;
                 }
-                try {
-                    const obs = JSON.parse(live.stdout);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({
-                        xi: obs.xi,
-                        phi: obs.phi,
-                        mean_order: obs.mean_order,
-                        consciousness_level: obs.consciousness_level,
-                        num_clusters: obs.num_clusters,
-                        total_memories: obs.total_memories,
-                        hemispheric_divergence: obs.hemispheric_divergence,
-                    }));
-                }
-                catch {
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(live.stdout);
-                }
+                // The metrics live under `consciousness`, not at the top level; reading
+                // the top level answered 200 `{}` for every request. No xi/phi (or
+                // unparseable output) is a 502, never a 200 — see extractXiMetrics.
+                const { status, body } = extractXiMetrics(live.stdout);
+                res.writeHead(status, { 'Content-Type': 'application/json', 'X-Kannaka-Source': live.source });
+                res.end(JSON.stringify({ ...body, source: live.source }));
             }
             else if (pathname === '/') {
                 // Serve static index.html if it exists

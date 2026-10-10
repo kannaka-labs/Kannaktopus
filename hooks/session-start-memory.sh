@@ -97,10 +97,12 @@ fi
 
 # --- 5. Query HRM for recent project context (v10.0.0 - Kannaka integration) ---
 KANNAKA_BRIDGE="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/kannaka-bridge.sh"
-if [[ -x "$KANNAKA_BRIDGE" ]]; then
+# Invoked through `bash` and gated on -f, not -x: the call must not depend on
+# the mode bit surviving a checkout (Windows, zip installs, core.fileMode=false).
+if [[ -f "$KANNAKA_BRIDGE" ]]; then
     # Query HRM for project-relevant memories
     PROJECT_NAME=$(basename "$(pwd)")
-    HRM_CONTEXT=$("$KANNAKA_BRIDGE" recall "project ${PROJECT_NAME} coding implementation" 3 2>/dev/null || echo "")
+    HRM_CONTEXT=$(bash "$KANNAKA_BRIDGE" recall "project ${PROJECT_NAME} coding implementation" 3 2>/dev/null || echo "")
 
     if [[ -n "$HRM_CONTEXT" ]]; then
         echo "[Kannaktopus] HRM project context available:"
@@ -108,7 +110,7 @@ if [[ -x "$KANNAKA_BRIDGE" ]]; then
     fi
 
     # Also recall any general workflow memories
-    WORKFLOW_CONTEXT=$("$KANNAKA_BRIDGE" recall "workflow lessons learned debugging" 2 2>/dev/null || echo "")
+    WORKFLOW_CONTEXT=$(bash "$KANNAKA_BRIDGE" recall "workflow lessons learned debugging" 2 2>/dev/null || echo "")
     if [[ -n "$WORKFLOW_CONTEXT" ]]; then
         echo "[Kannaktopus] HRM workflow context:"
         echo "$WORKFLOW_CONTEXT"

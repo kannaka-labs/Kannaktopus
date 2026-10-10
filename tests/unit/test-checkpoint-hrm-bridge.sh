@@ -36,7 +36,7 @@ case "\$1" in
 esac
 STUB
     # Deliberately NOT executable: the call must not depend on the mode bit,
-    # which kannaka-bridge.sh does not carry in git.
+    # which a checkout does not reliably preserve (Windows, core.fileMode=false).
     chmod -x "$case_dir/scripts/kannaka-bridge.sh"
     echo '{"workflow":"embrace","phases":{}}' > "$case_dir/session.json"
     local rc=0
