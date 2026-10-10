@@ -23,16 +23,39 @@ fi
 # Check if Kannaka HRM binary is available
 # Returns 0 if available, 1 otherwise
 kannaka_available() {
-    # Try to resolve Windows path first, then fallback to PATH
-    if [[ "$KANNAKA_BIN" == "kannaka" ]]; then
-        local win_path="/mnt/c/Users/nickf/.local/bin/kannaka.exe"
-        if [[ -f "$win_path" ]]; then
-            KANNAKA_BIN="$win_path"
-            return 0
+    # An explicit KANNAKA_BIN (path or name) is the only candidate considered.
+    if [[ "$KANNAKA_BIN" != "kannaka" ]]; then
+        command -v "$KANNAKA_BIN" >/dev/null 2>&1
+        return
+    fi
+
+    # PATH first, so whatever the user's shell would run is what we run.
+    if command -v kannaka >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Then the installer's default location, resolved for whoever is running
+    # this — never a path into one particular user's profile. $HOME covers
+    # Linux/macOS and Git Bash (where it is the Windows profile); under WSL the
+    # Windows profile is reached through USERPROFILE + wslpath when the host
+    # forwards USERPROFILE (WSLENV).
+    local -a candidates=("$HOME/.local/bin/kannaka" "$HOME/.local/bin/kannaka.exe")
+    if [[ -n "${USERPROFILE:-}" ]] && command -v wslpath >/dev/null 2>&1; then
+        local win_home
+        win_home=$(wslpath -u "$USERPROFILE" 2>/dev/null || true)
+        if [[ -n "$win_home" ]]; then
+            candidates+=("$win_home/.local/bin/kannaka.exe")
         fi
     fi
-    
-    command -v "$KANNAKA_BIN" >/dev/null 2>&1
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" && -x "$candidate" ]]; then
+            KANNAKA_BIN="$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Execute Kannaka with timeout and error handling

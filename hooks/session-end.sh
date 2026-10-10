@@ -191,7 +191,9 @@ fi
 
 # --- 6. Absorb session learnings into HRM (v10.0.0 - Kannaka integration) ---
 KANNAKA_BRIDGE="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/kannaka-bridge.sh"
-if [[ -x "$KANNAKA_BRIDGE" && -f "$SESSION_FILE" ]] && command -v jq &>/dev/null; then
+# Invoked through `bash` and gated on -f, not -x: the call must not depend on
+# the mode bit surviving a checkout (Windows, zip installs, core.fileMode=false).
+if [[ -f "$KANNAKA_BRIDGE" && -f "$SESSION_FILE" ]] && command -v jq &>/dev/null; then
     # Extract key session data for HRM absorption
     SESSION_WORKFLOW=$(jq -r '.workflow // "unknown"' "$SESSION_FILE" 2>/dev/null)
     SESSION_PHASE=$(jq -r '.current_phase // .phase // "none"' "$SESSION_FILE" 2>/dev/null)
@@ -216,7 +218,7 @@ if [[ -x "$KANNAKA_BRIDGE" && -f "$SESSION_FILE" ]] && command -v jq &>/dev/null
         fi
         
         # Absorb into HRM with project and workflow tags
-        "$KANNAKA_BRIDGE" absorb "$MEMORY_CONTENT" "$IMPORTANCE" "coding" "project:${PROJECT_NAME}" "workflow:${SESSION_WORKFLOW}" 2>/dev/null || true
+        bash "$KANNAKA_BRIDGE" absorb "$MEMORY_CONTENT" "$IMPORTANCE" "coding" "project:${PROJECT_NAME}" "workflow:${SESSION_WORKFLOW}" 2>/dev/null || true
         
         echo "[Kannaktopus] Session absorbed into HRM (importance: ${IMPORTANCE})"
     fi
