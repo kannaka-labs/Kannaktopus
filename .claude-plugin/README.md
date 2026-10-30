@@ -24,7 +24,7 @@ This works for research, code review, debugging, TDD, security audits, UI design
 ## Install
 
 ```bash
-claude plugin marketplace add https://github.com/NickFlach/Kannaktopus.git
+claude plugin marketplace add https://github.com/kannaka-labs/Kannaktopus.git
 claude plugin install octo@kannaka-plugins
 ```
 
@@ -62,4 +62,4 @@ Octopus orchestrates — it doesn't replace domain knowledge. If three models co
 - [**Command Reference**](../docs/COMMAND-REFERENCE.md) — all 47 commands with triggers
 - [**Persona Guide**](../docs/AGENTS.md) — 32 specialized agents
 - [**Changelog**](../CHANGELOG.md) — release history
-- [**Issues**](https://github.com/NickFlach/Kannaktopus/issues) — bugs and feature requests
+- [**Issues**](https://github.com/kannaka-labs/Kannaktopus/issues) — bugs and feature requests
