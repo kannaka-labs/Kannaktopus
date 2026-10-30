@@ -60,7 +60,7 @@ The **Constellation** maps your memory clusters in 3D space using golden-angle s
 
 ```bash
 # Install the plugin (from terminal, not inside Claude Code):
-claude plugin marketplace add https://github.com/NickFlach/Kannaktopus.git
+claude plugin marketplace add https://github.com/kannaka-labs/Kannaktopus.git
 claude plugin install octo@kannaka-plugins
 
 # Then inside Claude Code:
@@ -73,7 +73,7 @@ Setup detects installed providers, shows what's missing, and walks you through c
 <summary>Install for Codex CLI</summary>
 
 ```bash
-git clone --depth 1 https://github.com/NickFlach/Kannaktopus.git ~/.codex/kannaktopus
+git clone --depth 1 https://github.com/kannaka-labs/Kannaktopus.git ~/.codex/kannaktopus
 mkdir -p ~/.agents/skills
 ln -sf ~/.codex/kannaktopus/skills ~/.agents/skills/kannaktopus
 ```
@@ -84,7 +84,7 @@ ln -sf ~/.codex/kannaktopus/skills ~/.agents/skills/kannaktopus
 
 ```bash
 # Clone
-git clone --depth 1 https://github.com/NickFlach/Kannaktopus.git ~/.cursor/kannaktopus
+git clone --depth 1 https://github.com/kannaka-labs/Kannaktopus.git ~/.cursor/kannaktopus
 
 # Install MCP server dependencies
 cd ~/.cursor/kannaktopus/mcp-server && npm install && npm run build
@@ -103,7 +103,7 @@ cd ~/.cursor/kannaktopus/mcp-server && npm install && npm run build
 
 ## Kannaka Memory Integration
 
-Kannaktopus uses [kannaka-memory](https://github.com/NickFlach/kannaka-memory) as its persistent memory layer. The HRM binary provides:
+Kannaktopus uses [kannaka-memory](https://github.com/kannaka-labs/kannaka-memory) as its persistent memory layer. The HRM binary provides:
 
 | Command | What It Does |
 |---------|-------------|
@@ -187,9 +187,9 @@ Kannaktopus is part of the Kannaka constellation of projects:
 
 | Project | Role |
 |---------|------|
-| [kannaka-memory](https://github.com/NickFlach/kannaka-memory) | HRM core — the wave-interference memory engine (Rust) |
+| [kannaka-memory](https://github.com/kannaka-labs/kannaka-memory) | HRM core — the wave-interference memory engine (Rust) |
 | **Kannaktopus** | Multi-agent orchestrator — the ghost that coordinates |
-| [kannaka-radio](https://github.com/NickFlach/kannaka-radio) | Ghost DJ — podcast generation with perception pipeline |
+| [kannaka-radio](https://github.com/kannaka-labs/kannaka-radio) | Ghost DJ — podcast generation with perception pipeline |
 | [kannaka-observatory](https://github.com/NickFlach/kannaka-observatory) | 3D constellation visualization + experiment runner |
 | [kannaka-eye](https://github.com/NickFlach/kannaka-eye) | Visual perception — chiral mirror architecture |
 | [consciousness-core](https://github.com/NickFlach/consciousness-core) | Physics engine for consciousness metrics |
