@@ -78,10 +78,19 @@ get_agent_command() {
             esac
             ;;
         codex-review) echo "codex exec review" ;; # Code review mode (no sandbox support)
-        claude) echo "claude${_BARE_OPT} --print" ;;                         # Claude Sonnet 4.6
-        claude-sonnet) echo "claude${_BARE_OPT} --print --model sonnet" ;;        # Claude Sonnet explicit
-        claude-opus) echo "claude${_BARE_OPT} --print --model opus" ;;            # Claude Opus 4.6 (v8.0)
-        claude-opus-fast) echo "claude${_BARE_OPT} --print --model opus --fast" ;; # Claude Opus 4.6 Fast (v8.4: v2.1.36+)
+        # OCTOPUS_CLAUDE_EXTRA_ARGS: extra flags for every headless claude call, e.g.
+        # "--permission-mode acceptEdits --allowedTools Bash(cargo:*),Edit,Write".
+        # Without it a `claude --print` subprocess is denied every file write and
+        # shell command the repo's own settings do not already allow, so ralph
+        # loops and spawns in such repos iterate without changing anything.
+        claude) echo "claude${_BARE_OPT} --print ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;;                         # Claude Sonnet 4.6
+        claude-sonnet) echo "claude${_BARE_OPT} --print --model sonnet ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;;        # Claude Sonnet explicit
+        claude-opus) echo "claude${_BARE_OPT} --print --model opus ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;;            # Claude Opus 4.6 (v8.0)
+        # Fast mode is a session toggle (/fast) in current Claude Code, not a CLI flag:
+        # `claude --print --fast` fails with "unknown option '--fast'" and spawn.sh
+        # upgrades every claude-opus to claude-opus-fast when SUPPORTS_FAST_OPUS is
+        # true, so with the flag every Opus arm died in 30 s. Same command as claude-opus.
+        claude-opus-fast) echo "claude${_BARE_OPT} --print --model opus ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;; # Claude Opus 4.6 (fast mode is a session toggle)
         openrouter) echo "openrouter_execute" ;;                 # OpenRouter API (v4.8)
         openrouter-glm5) echo "openrouter_execute_model z-ai/glm-5" ;;           # v8.11.0: GLM-5 via OpenRouter
         openrouter-kimi) echo "openrouter_execute_model moonshotai/kimi-k2.5" ;; # v8.11.0: Kimi K2.5 via OpenRouter
