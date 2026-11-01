@@ -134,8 +134,29 @@ run_with_timeout() {
 
     local exit_code
 
+    # A shell function (openrouter_execute, openrouter_execute_model,
+    # perplexity_execute) cannot be exec'd by an external timeout binary:
+    # `timeout 600 openrouter_execute_model …` fails with 127 wherever
+    # coreutils is installed, which is every Linux box and Git Bash on
+    # Windows. Those arms only ever worked on hosts WITHOUT timeout. Run
+    # functions through the in-shell fallback instead.
+    if declare -F "$1" &>/dev/null; then
+        local fn_pid fn_monitor_pid
+        # `<&0` keeps the caller's stdin (the piped prompt): a plain
+        # background job in a non-interactive shell gets /dev/null instead.
+        "$@" <&0 &
+        fn_pid=$!
+        ( sleep "$timeout_secs" && kill -TERM "$fn_pid" 2>/dev/null ) &
+        fn_monitor_pid=$!
+        if wait "$fn_pid" 2>/dev/null; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
+        kill "$fn_monitor_pid" 2>/dev/null
+        wait "$fn_monitor_pid" 2>/dev/null
     # Use gtimeout (GNU) or timeout if available
-    if command -v gtimeout &>/dev/null; then
+    elif command -v gtimeout &>/dev/null; then
         gtimeout "$timeout_secs" "$@"
         exit_code=$?
     elif command -v timeout &>/dev/null; then
