@@ -30,6 +30,39 @@ except Exception:
     json_extract "$json" "content"
 }
 
+# _responses_output_text <json>
+# Sets REPLY to the concatenated message text of an OpenAI Responses-format
+# reply (Perplexity's Agent API): .output[] of type "message" → .content[] of
+# type "output_text" → .text. The top-level output_text convenience field is
+# empty on Perplexity, so it is not relied on.
+_responses_output_text() {
+    local json="$1"
+    REPLY=""
+    if command -v jq &>/dev/null; then
+        REPLY=$(printf '%s' "$json" | jq -re '[.output[]? | select(.type=="message") | .content[]? | select(.type=="output_text") | .text] | join("\n") | select(length>0)' 2>/dev/null) && return 0
+        return 1
+    fi
+    if command -v python3 &>/dev/null; then
+        REPLY=$(python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    parts = [c.get("text", "") for o in d.get("output") or [] if o.get("type") == "message"
+             for c in o.get("content") or [] if c.get("type") == "output_text"]
+    t = "\n".join(p for p in parts if p)
+    if not t:
+        sys.exit(1)
+    print(t)
+except Exception:
+    sys.exit(1)
+' <<< "$json" 2>/dev/null) && return 0
+        return 1
+    fi
+    local pattern='"text"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+    [[ "$json" =~ $pattern ]] && { REPLY="${BASH_REMATCH[1]}"; return 0; }
+    return 1
+}
+
 # OpenRouter model-specific agent wrapper (v8.11.0, hardened v9.7.8)
 # Used by openrouter-glm5, openrouter-kimi, openrouter-deepseek
 # First arg is the fixed model ID, remaining args are prompt/task/complexity/output
@@ -207,9 +240,17 @@ perplexity_execute() {
         return 1
     fi
 
-    [[ "$VERBOSE" == "true" ]] && log DEBUG "Perplexity Sonar request: model=$model" || true
+    # Perplexity retired /chat/completions in favour of the Agent API
+    # (POST /v1/responses, "Sonar is now the Agent API"). Model ids are now
+    # provider-qualified; every legacy sonar* name maps to perplexity/sonar,
+    # the one Sonar model /v1/models lists. Qualified ids pass through.
+    case "$model" in
+        */*) ;;
+        sonar*|"") model="perplexity/sonar" ;;
+        *) model="perplexity/$model" ;;
+    esac
+    [[ "$VERBOSE" == "true" ]] && log DEBUG "Perplexity Agent API request: model=$model" || true
 
-    # Build JSON payload — Perplexity uses OpenAI-compatible chat completions API
     local escaped_prompt
     escaped_prompt=$(json_escape "$prompt")
 
@@ -217,24 +258,23 @@ perplexity_execute() {
     payload=$(cat << EOF
 {
   "model": "$model",
-  "messages": [
-    {"role": "system", "content": "You are a research assistant with live web access. Provide detailed, factual answers with citations. Always include source URLs when referencing specific information."},
-    {"role": "user", "content": "$escaped_prompt"}
-  ]
+  "instructions": "You are a research assistant with live web access. Provide detailed, factual answers with citations. Always include source URLs when referencing specific information.",
+  "input": "$escaped_prompt"
 }
 EOF
 )
 
     local response
-    response=$(curl -s -X POST "https://api.perplexity.ai/chat/completions" \
+    response=$(curl -s -X POST "https://api.perplexity.ai/v1/responses" \
+        --max-time 180 \
         -H "Authorization: Bearer ${PERPLEXITY_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "Connection: keep-alive" \
         -d "$payload")
 
-    # Extract content from response (same format as OpenAI-compatible API)
+    # Extract the message text from the Responses-format reply
     local content=""
-    if _chat_completion_content "$response"; then
+    if _responses_output_text "$response"; then
         content="$REPLY"
     fi
 
