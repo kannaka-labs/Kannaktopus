@@ -3,6 +3,33 @@
 # Extracted from orchestrate.sh — v9.7.5
 # Hardened in v9.7.8: timeout, HTTP status handling, 429 retry, dedup
 
+# _chat_completion_content <json>
+# Sets REPLY to .choices[0].message.content of an OpenAI-compatible chat
+# completion. `json_extract "$response" content` looked for a TOP-LEVEL
+# "content" key, which no chat-completions response has, so every OpenRouter
+# and Perplexity call reported "Empty response" the moment jq or python3 was
+# installed (the bash-regex fallback happened to find the nested key).
+_chat_completion_content() {
+    local json="$1"
+    REPLY=""
+    if command -v jq &>/dev/null; then
+        REPLY=$(printf '%s' "$json" | jq -re '.choices[0].message.content // empty' 2>/dev/null) && return 0
+        return 1
+    fi
+    if command -v python3 &>/dev/null; then
+        REPLY=$(python3 -c '
+import json, sys
+try:
+    v = json.loads(sys.stdin.read())["choices"][0]["message"]["content"]
+    print(v if isinstance(v, str) else json.dumps(v))
+except Exception:
+    sys.exit(1)
+' <<< "$json" 2>/dev/null) && return 0
+        return 1
+    fi
+    json_extract "$json" "content"
+}
+
 # OpenRouter model-specific agent wrapper (v8.11.0, hardened v9.7.8)
 # Used by openrouter-glm5, openrouter-kimi, openrouter-deepseek
 # First arg is the fixed model ID, remaining args are prompt/task/complexity/output
@@ -14,6 +41,13 @@ openrouter_execute_model() {
     local task_type="${3:-general}"
     local complexity="${4:-2}"
     local output_file="${5:-}"
+
+    # Since v9.2.2 spawn_agent delivers every prompt on stdin (ARG_MAX), but
+    # this function only ever read it from $2 — so the OpenRouter arms sent
+    # an empty user message and reported "Empty response" for every task.
+    if [[ -z "$prompt" && ! -t 0 ]]; then
+        prompt=$(cat)
+    fi
 
     if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
         log ERROR "OPENROUTER_API_KEY not set"
@@ -47,7 +81,7 @@ EOF
 
     while (( attempt < max_attempts )); do
         raw_response=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
-            --max-time 60 \
+            --max-time 180 \
             -w "%{http_code}" \
             -D "$header_file" \
             -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
@@ -115,7 +149,7 @@ EOF
 
     # Extract content from response
     local content=""
-    if json_extract "$response" "content"; then
+    if _chat_completion_content "$response"; then
         content="$REPLY"
     fi
 
@@ -163,6 +197,11 @@ perplexity_execute() {
     local prompt="$2"
     local output_file="${3:-}"
 
+    # Same stdin delivery as openrouter_execute_model (spawn_agent pipes the prompt).
+    if [[ -z "$prompt" && ! -t 0 ]]; then
+        prompt=$(cat)
+    fi
+
     if [[ -z "${PERPLEXITY_API_KEY:-}" ]]; then
         log ERROR "PERPLEXITY_API_KEY not set — get one at https://www.perplexity.ai/settings/api"
         return 1
@@ -195,7 +234,7 @@ EOF
 
     # Extract content from response (same format as OpenAI-compatible API)
     local content=""
-    if json_extract "$response" "content"; then
+    if _chat_completion_content "$response"; then
         content="$REPLY"
     fi
 
