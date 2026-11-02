@@ -744,13 +744,13 @@ EOF
 )
 
     local response
-    response=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+    response=$(printf '%s' "$payload" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
         -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "Connection: keep-alive" \
         -H "HTTP-Referer: https://github.com/NickFlach/Kannaktopus" \
         -H "X-Title: Kannaktopus" \
-        -d "$payload")
+        --data-binary @-)
 
     # Extract content from response (fast regex extraction)
     local content=""
