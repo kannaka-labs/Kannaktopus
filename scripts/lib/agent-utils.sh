@@ -261,6 +261,64 @@ get_ralph_iteration() {
     grep -m1 "^iteration:" "$RALPH_STATE_FILE" | awk '{print $2}'
 }
 
+# Snapshot of working-tree state (HEAD + tracked diff + untracked files, with
+# content), ignoring the orchestrator's own .kannaktopus files. Prints a hash;
+# empty output when not in a git repo.
+ralph_workspace_snapshot() {
+    git rev-parse --is-inside-work-tree &>/dev/null || return 0
+    {
+        git rev-parse HEAD 2>/dev/null
+        git diff HEAD -- . ':(exclude).kannaktopus' 2>/dev/null
+        git ls-files --others --exclude-standard -z -- . ':(exclude).kannaktopus' 2>/dev/null | while IFS= read -r -d '' f; do
+            printf 'untracked:%s:' "$f"
+            cksum < "$f" 2>/dev/null
+        done
+    } | cksum
+}
+
+# True when the agent's closing lines (not earlier tool logs) say it could
+# not do the work: "I cannot complete this", "command execution is blocked"
+ralph_output_admits_failure() {
+    local output="$1"
+    tail -n 20 <<< "$output" | grep -Eiq "(^|[^[:alnum:]])(i (cannot|can't|can not|was unable to|am unable to)|unable to (run|complete|execute|write|edit|make)|(is|was|are|were) blocked|read-only|permission denied)"
+}
+
+# Extract the test command named in the prompt by an explicit "Test command: <cmd>" line
+ralph_extract_test_command() {
+    local prompt="$1" line cmd
+    line=$(grep -Eim1 '^[[:space:]]*test[[:space:]]+command[[:space:]]*:' <<< "$prompt") || return 1
+    cmd=$(sed -e 's/^[^:]*://' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^`//' -e 's/`$//' <<< "$line")
+    [[ -n "$cmd" ]] || return 1
+    printf '%s\n' "$cmd"
+}
+
+# Decide whether a completion promise counts. Args: output prompt snapshot_before snapshot_after
+# Returns 0 if accepted; otherwise returns 1 and logs the reason.
+ralph_promise_accepted() {
+    local output="$1" prompt="$2" before="$3" after="$4" test_cmd
+    if ralph_output_admits_failure "$output"; then
+        log WARN "Ralph: completion promise rejected - output says the work could not be done"
+        return 1
+    fi
+    if [[ "$before" != "$after" ]]; then
+        return 0
+    fi
+    # The command comes from the prompt, so it runs bounded by a timeout
+    if test_cmd=$(ralph_extract_test_command "$prompt"); then
+        if timeout "${RALPH_TEST_TIMEOUT:-300}" bash -c "$test_cmd" &>/dev/null; then
+            return 0
+        fi
+        log WARN "Ralph: completion promise rejected - no changes and test command failed: $test_cmd"
+        return 1
+    fi
+    if [[ -z "$after" ]]; then
+        log WARN "Ralph: completion promise rejected - not a git work tree, cannot detect changes, and no passing test command"
+    else
+        log WARN "Ralph: completion promise rejected - nothing changed in the working tree and no passing test command"
+    fi
+    return 1
+}
+
 # Run agent with ralph-wiggum style iteration
 # Keeps iterating until completion promise or max iterations
 run_with_ralph_loop() {
@@ -307,14 +365,25 @@ This is iteration $iteration of $max_iterations.
 Output $promise when the task is truly complete."
         fi
 
+        # Snapshot working tree so we can tell whether this iteration changed anything
+        local snapshot_before snapshot_after
+        snapshot_before=$(ralph_workspace_snapshot)
+
         # Run agent
         output=$(run_agent_sync "$agent_type" "$iteration_prompt" 300)
 
-        # Check for completion
+        snapshot_after=$(ralph_workspace_snapshot)
+
+        # Check for completion (a promise only counts if work actually happened)
         if check_completion_promise "$output" "$promise"; then
-            completed=true
-            update_ralph_state "$iteration" "completed" "Task completed successfully"
-            break
+            if ralph_promise_accepted "$output" "$prompt" "$snapshot_before" "$snapshot_after"; then
+                completed=true
+                update_ralph_state "$iteration" "completed" "Task completed successfully"
+                break
+            fi
+            update_ralph_state "$iteration" "running" "Completion promise rejected, continuing"
+            sleep 2
+            continue
         fi
 
         update_ralph_state "$iteration" "running" "Iteration completed, promise not found"
