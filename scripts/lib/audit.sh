@@ -18,7 +18,7 @@ audit_log() {
 
     local entry
     entry=$(cat << EOF
-{"timestamp":"$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)","action":"$action","phase":"$phase","decision":"$decision","reason":"$reason","reviewer":"$reviewer","session":"${SESSION_ID:-unknown}"}
+{"timestamp":"$(json_escape "$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)")","action":"$(json_escape "$action")","phase":"$(json_escape "$phase")","decision":"$(json_escape "$decision")","reason":"$(json_escape "$reason")","reviewer":"$(json_escape "$reviewer")","session":"$(json_escape "${SESSION_ID:-unknown}")"}
 EOF
 )
     echo "$entry" >> "$AUDIT_LOG"

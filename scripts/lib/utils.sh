@@ -106,7 +106,18 @@ json_escape() {
     str="${str//$'\b'/\\b}"   # backspace
     str="${str//$'\f'/\\f}"   # form feed
 
-    echo "$str"
+    # Any other control character (U+0001-U+001F, e.g. ESC) as \u00XX
+    if [[ "$str" == *[$'\001'-$'\037']* ]]; then
+        local code ch hex
+        for code in 1 2 3 4 5 6 7 11 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+            printf -v hex '%02x' "$code"
+            printf -v ch "\\x$hex"
+            str="${str//"$ch"/\\u00$hex}"
+        done
+    fi
+
+    # printf, not echo: a value of exactly -n or -e must survive
+    printf '%s\n' "$str"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
