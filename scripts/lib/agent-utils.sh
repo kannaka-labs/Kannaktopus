@@ -14,10 +14,36 @@
 # v9.19.0: Safe default for --bare flag (set by providers.sh, but guard for standalone sourcing)
 _BARE_OPT="${_BARE_OPT:-}"
 
+# True on Windows shells (Git Bash / MSYS2 / Cygwin).
+is_windows_host() {
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Codex cannot execute commands on Windows: `codex exec` reports a read-only
+# sandbox and every exec_command is rejected (Kannaktopus #119). Returns 0 when
+# Codex should be avoided for implementing/code-reading work. Set
+# OCTOPUS_CODEX_FORCE_EXEC=true to override.
+codex_blocked_on_windows() {
+    [[ "${OCTOPUS_CODEX_FORCE_EXEC:-}" == "true" ]] && return 1
+    is_windows_host
+}
+
 # Role-to-agent mapping (function-based for bash 3.x compatibility)
 # Returns agent:model format for a given role
 get_role_mapping() {
     local role="$1"
+    if codex_blocked_on_windows; then
+        case "$role" in
+            researcher)   echo "gemini:gemini-3.1-pro-preview"; return ;;
+            synthesizer)  echo "claude:claude-sonnet-4.6"; return ;;
+            strategist)   echo "claude-opus:claude-opus-4.6"; return ;;
+            architect)    echo "claude-opus:claude-opus-4.6"; return ;;
+            *)            echo "claude-sonnet:claude-sonnet-4.6"; return ;;  # implementer, reviewer, default
+        esac
+    fi
     case "$role" in
         architect)    echo "codex:gpt-5.4" ;;                  # System design, planning (v8.48: GPT-5.4)
         researcher)   echo "gemini:gemini-3.1-pro-preview" ;;   # Deep investigation

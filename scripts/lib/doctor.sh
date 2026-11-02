@@ -95,6 +95,25 @@ doctor_check_providers() {
             "Codex CLI not installed" "npm install -g @openai/codex"
     fi
 
+    # Codex on Windows cannot execute commands (Kannaktopus #119)
+    local _doc_win=false
+    if type is_windows_host &>/dev/null; then
+        is_windows_host && _doc_win=true
+    else
+        case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) _doc_win=true ;; esac
+    fi
+    if [[ "$_doc_win" == "true" ]]; then
+        if [[ "${OCTOPUS_CODEX_FORCE_EXEC:-}" == "true" ]]; then
+            doctor_add "codex-windows-exec" "providers" "info" \
+                "Codex on Windows: override active (OCTOPUS_CODEX_FORCE_EXEC=true)" \
+                "Codex cannot execute commands on Windows (sandbox read-only); you have opted in to using it anyway"
+        else
+            doctor_add "codex-windows-exec" "providers" "warn" \
+                "Codex cannot execute commands on Windows" \
+                "codex exec reports a read-only sandbox and rejects every exec_command, so implementing and code-reading roles are routed to Claude instead. Set OCTOPUS_CODEX_FORCE_EXEC=true to override"
+        fi
+    fi
+
     # Gemini CLI
     if command -v gemini &>/dev/null; then
         local gemini_ver gemini_path
