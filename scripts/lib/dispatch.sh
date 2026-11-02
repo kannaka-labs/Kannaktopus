@@ -104,7 +104,9 @@ get_agent_command() {
             ;;
         ollama|ollama-*)  # v9.9.0: Ollama local LLM — ollama run
             model=$(get_agent_model "$agent_type" "$phase" "$role")
-            echo "ollama run $model"
+            # --nowordwrap: without it ollama wraps long lines with cursor escapes
+            # (ESC[1D ESC[K) that land in the result file even when stdout is a pipe
+            echo "ollama run --nowordwrap $model"
             ;;
         qwen|qwen-research)  # v9.10.0: Qwen CLI — fork of Gemini CLI (free tier)
             echo "env NODE_NO_WARNINGS=1 qwen -o text --approval-mode yolo"
