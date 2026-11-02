@@ -33,6 +33,21 @@ providers:
     cost_source: "included"
     detection: "always"
     optional: false
+  perplexity:
+    indicator: "🟣"
+    cost_source: "PERPLEXITY_API_KEY"
+    detection: "PERPLEXITY_API_KEY set"
+    optional: true
+  openrouter:
+    indicator: "🟠"
+    cost_source: "OPENROUTER_API_KEY"
+    detection: "OPENROUTER_API_KEY set"
+    optional: true
+  ollama:
+    indicator: "🟢"
+    cost_source: "local"
+    detection: "ollama list answers (honours OLLAMA_HOST)"
+    optional: true
 
 phases:
   - name: probe
@@ -63,6 +78,27 @@ phases:
         prompt_template: |
           Analyze the current codebase for relevant context on: {{prompt}}
           Identify existing patterns, gaps, and integration points.
+      - provider: perplexity
+        role: "Live web research with sources"
+        parallel: true
+        prompt_template: |
+          Search the live web for current information relevant to: {{prompt}}
+          Find documentation, issues, changelogs and discussions from the last
+          12 months. Include source URLs and dates.
+      - provider: openrouter
+        role: "Independent second-model analysis"
+        parallel: true
+        prompt_template: |
+          Give an independent analysis of the following task: likely root causes,
+          the approach you would take, and the risks another model might miss.
+          Task: {{prompt}}
+      - provider: ollama
+        role: "Local model sanity check"
+        parallel: true
+        prompt_template: |
+          In a few short paragraphs, say what the following task is really asking
+          for and what would count as done. Be concrete and brief.
+          Task: {{prompt}}
     transition:
       type: auto
       next: grasp
@@ -194,6 +230,14 @@ phases:
           {{tangle_implementation}}
 
           Check: OWASP top 10, input validation, error handling, edge cases.
+      - provider: openrouter
+        role: "Independent correctness review"
+        parallel: true
+        prompt_template: |
+          Review this implementation as an independent reviewer:
+          {{tangle_implementation}}
+
+          Check: correctness bugs, tests that assert nothing, changes outside the task.
       - provider: claude
         role: "Final synthesis and recommendations"
         parallel: false

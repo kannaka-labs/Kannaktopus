@@ -168,6 +168,21 @@ resolve_prompt_template() {
     echo "$resolved"
 }
 
+# Is a YAML provider usable right now? CLI arms need their binary or key,
+# API arms need their key, ollama must answer (it honours OLLAMA_HOST, so a
+# remote or tunnelled server counts). Claude and unknown providers pass, as
+# before; spawn_agent reports an unknown one.
+yaml_provider_available() {
+    case "$1" in
+        codex)      command -v codex &>/dev/null || [[ -n "${OPENAI_API_KEY:-}" ]] ;;
+        gemini)     command -v gemini &>/dev/null || [[ -n "${GEMINI_API_KEY:-}" ]] ;;
+        perplexity) [[ -n "${PERPLEXITY_API_KEY:-}" ]] ;;
+        openrouter) [[ -n "${OPENROUTER_API_KEY:-}" ]] ;;
+        ollama)     command -v ollama &>/dev/null && timeout 10 ollama list &>/dev/null ;;
+        *)          return 0 ;;
+    esac
+}
+
 # Execute a single workflow phase from YAML definition
 # Spawns agents as defined, respects parallel/sequential flags, evaluates quality gates
 execute_workflow_phase() {
@@ -257,22 +272,11 @@ $previous_output"
         esac
 
         # Check provider availability
-        case "$provider" in
-            codex)
-                if ! command -v codex &>/dev/null && [[ -z "${OPENAI_API_KEY:-}" ]]; then
-                    log "WARN" "Codex not available, skipping agent in phase $phase_name"
-                    ((agent_idx++)) || true
-                    continue
-                fi
-                ;;
-            gemini)
-                if ! command -v gemini &>/dev/null && [[ -z "${GEMINI_API_KEY:-}" ]]; then
-                    log "WARN" "Gemini not available, skipping agent in phase $phase_name"
-                    ((agent_idx++)) || true
-                    continue
-                fi
-                ;;
-        esac
+        if ! yaml_provider_available "$provider"; then
+            log "WARN" "$provider not available, skipping agent in phase $phase_name"
+            ((agent_idx++)) || true
+            continue
+        fi
 
         if [[ "$is_parallel" == "true" ]]; then
             spawn_agent "$agent_type" "$agent_prompt" "$task_id" "$role" "$phase_name" &
