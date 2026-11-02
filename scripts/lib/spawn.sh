@@ -10,6 +10,9 @@ spawn_agent() {
     local role="${4:-}"         # Optional role override
     local phase="${5:-}"        # Optional phase context
     local use_fork="${6:-false}" # Optional fork context (v2.1.12+)
+    # Progress record id: task_id defaults to the second, so parallel spawns of
+    # one agent type could share it and overwrite each other's record (#150)
+    local progress_id="${task_id}-${BASHPID:-$$}-${RANDOM}"
 
     # v7.25.0: Debug logging
     log "DEBUG" "spawn_agent: agent=$agent_type, task_id=$task_id, role=${role:-auto}, phase=${phase:-none}, fork=$use_fork"
@@ -492,7 +495,7 @@ ${heuristic_ctx}"
         local start_time_ms
         # Use seconds instead of milliseconds for compatibility (macOS date doesn't support %N)
         start_time_ms=$(( $(date +%s) * 1000 ))
-        update_agent_status "$agent_type" "running" 0 0.0
+        update_agent_status "$agent_type" "running" 0 0.0 "${TIMEOUT:-300}" "$progress_id"
 
         # v7.19.0 P0.1: Use tee to stream output to both temp file and raw backup
         # v8.10.0: Gemini uses stdin-based prompt delivery (Issue #25)
@@ -638,7 +641,7 @@ ${heuristic_ctx}"
             local end_time_ms elapsed_ms
             end_time_ms=$(( $(date +%s) * 1000 ))
             elapsed_ms=$((end_time_ms - start_time_ms))
-            update_agent_status "$agent_type" "completed" "$elapsed_ms" 0.0
+            update_agent_status "$agent_type" "completed" "$elapsed_ms" 0.0 "${TIMEOUT:-300}" "$progress_id"
             # v8.18.0: Record provider learning
             local result_summary
             result_summary=$(head -c 200 "$result_file" 2>/dev/null | tr '\n' ' ')
@@ -710,7 +713,7 @@ ${heuristic_ctx}"
             local end_time_ms elapsed_ms
             end_time_ms=$(( $(date +%s) * 1000 ))
             elapsed_ms=$((end_time_ms - start_time_ms))
-            update_agent_status "$agent_type" "timeout" "$elapsed_ms" 0.0
+            update_agent_status "$agent_type" "timeout" "$elapsed_ms" 0.0 "${TIMEOUT:-300}" "$progress_id"
             # v8.20.0: Record timeout for provider intelligence
             record_outcome "$agent_type" "$agent_type" "${task_type:-unknown}" "${phase:-unknown}" "timeout" "$elapsed_ms" 2>/dev/null || true
             # v9.13: Record timeout as transient failure for circuit breaker
@@ -752,7 +755,7 @@ ${heuristic_ctx}"
             local end_time_ms elapsed_ms
             end_time_ms=$(( $(date +%s) * 1000 ))
             elapsed_ms=$((end_time_ms - start_time_ms))
-            update_agent_status "$agent_type" "failed" "$elapsed_ms" 0.0
+            update_agent_status "$agent_type" "failed" "$elapsed_ms" 0.0 "${TIMEOUT:-300}" "$progress_id"
             # v8.20.0: Record failure for provider intelligence
             record_outcome "$agent_type" "$agent_type" "${task_type:-unknown}" "${phase:-unknown}" "fail" "$elapsed_ms" 2>/dev/null || true
             # v9.13: Record failure for circuit breaker (classify from error output if available)
