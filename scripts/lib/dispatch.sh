@@ -178,6 +178,7 @@ get_agent_model() {
         perplexity*) provider="perplexity" ;;
         qwen*)       provider="qwen" ;;
         opencode*)   provider="opencode" ;;
+        ollama*)     provider="ollama" ;;
     esac
 
     local resolved_model
