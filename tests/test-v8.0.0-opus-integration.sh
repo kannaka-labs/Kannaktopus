@@ -7,7 +7,7 @@
 #   - Agent config with claude-opus entries
 #   - Skill description compression (single-line, <120 chars)
 #   - Role mapping updates (strategist, synthesizer)
-#   - OpenRouter premium routing to claude-opus-4-6
+#   - OpenRouter premium routing to claude-opus-4.6
 #
 # NOTE: orchestrate.sh has a main execution block that runs on source,
 # so we use grep-based static analysis and subshell function extraction
@@ -209,11 +209,11 @@ echo ""
 echo -e "${BLUE}Test Group 4: OpenRouter premium routing${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# 4.1: Complexity 3 coding routes to claude-opus-4-6
-if grep -q 'anthropic/claude-opus-4-6' "$ALL_SRC"; then
-    assert_pass "4.1 OpenRouter complexity 3 routes to anthropic/claude-opus-4-6"
+# 4.1: Complexity 3 coding routes to claude-opus-4.6
+if grep -q 'echo "anthropic/claude-opus-4.6' "$ALL_SRC"; then
+    assert_pass "4.1 OpenRouter complexity 3 routes to anthropic/claude-opus-4.6"
 else
-    assert_fail "4.1 OpenRouter complexity 3 routes to anthropic/claude-opus-4-6"
+    assert_fail "4.1 OpenRouter complexity 3 routes to anthropic/claude-opus-4.6"
 fi
 
 echo ""
