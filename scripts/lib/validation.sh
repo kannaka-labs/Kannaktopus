@@ -232,6 +232,29 @@ EOF
     esac
 }
 
+# Portable SHA-256 of a file, left in _SHA256_OUT. Tries sha256sum, shasum,
+# openssl. Runs in the caller's shell (not $(...)) so the missing-tool WARN
+# is logged once per process. Returns 1 when no tool produces a digest.
+_sha256_file() {
+    local f="$1" tool
+    _SHA256_OUT=""
+    for tool in sha256sum shasum openssl; do
+        command -v "$tool" >/dev/null 2>&1 || continue
+        case "$tool" in
+            sha256sum) _SHA256_OUT=$(sha256sum "$f" 2>/dev/null | awk '{print $1}') || _SHA256_OUT="" ;;
+            shasum)    _SHA256_OUT=$(shasum -a 256 "$f" 2>/dev/null | awk '{print $1}') || _SHA256_OUT="" ;;
+            openssl)   _SHA256_OUT=$(openssl dgst -sha256 "$f" 2>/dev/null | awk '{print $NF}') || _SHA256_OUT="" ;;
+        esac
+        [[ "$_SHA256_OUT" =~ ^[0-9a-f]{64}$ ]] && return 0
+        _SHA256_OUT=""
+    done
+    if [[ -z "${_SHA256_WARNED:-}" ]]; then
+        _SHA256_WARNED=1
+        log "WARN" "No SHA-256 tool found (sha256sum, shasum, openssl) - result integrity checks disabled"
+    fi
+    return 1
+}
+
 verify_result_integrity() {
     local result_file="$1"
     local manifest_dir="${WORKSPACE_DIR:-${HOME}/.kannaktopus}"
@@ -245,7 +268,8 @@ verify_result_integrity() {
     [[ -z "$recorded_hash" ]] && return 0
 
     local current_hash
-    current_hash=$(shasum -a 256 "$result_file" 2>/dev/null | awk '{print $1}') || return 0
+    _sha256_file "$result_file" || return 0
+    current_hash="$_SHA256_OUT"
 
     if [[ "$recorded_hash" != "$current_hash" ]]; then
         log "WARN" "INTEGRITY: Hash mismatch for $result_file (expected=$recorded_hash, got=$current_hash)"

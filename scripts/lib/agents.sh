@@ -26,7 +26,12 @@ record_result_hash() {
 
     mkdir -p "$manifest_dir"
     local hash
-    hash=$(shasum -a 256 "$result_file" 2>/dev/null | awk '{print $1}') || return 0
+    if ! declare -F _sha256_file >/dev/null; then
+        log "WARN" "validation.sh not loaded - result integrity hash not recorded"
+        return 0
+    fi
+    _sha256_file "$result_file" || return 0
+    hash="$_SHA256_OUT"
     echo "${result_file}:${hash}:$(date +%s)" >> "$manifest"
 }
 
@@ -109,6 +114,7 @@ update_agent_status() {
     local elapsed_ms="${3:-0}"
     local cost="${4:-0.0}"
     local timeout_secs="${5:-${TIMEOUT:-300}}"  # Use provided or global timeout
+    local agent_id="${6:-${agent_name}-$$-${RANDOM}${RANDOM}}"  # Unique id (spawn task_id) used to upsert; unique fallback keeps id-less callers appending
 
     # Skip if progress tracking disabled or no progress file
     if [[ "$PROGRESS_TRACKING_ENABLED" != "true" ]]; then
@@ -141,6 +147,7 @@ update_agent_status() {
     # Create agent status record (JSON string for jq)
     local agent_record
     agent_record=$(jq -n \
+        --arg id "$agent_id" \
         --arg name "$agent_name" \
         --arg status "$status" \
         --arg started "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
@@ -150,12 +157,12 @@ update_agent_status() {
         --arg timeout_warning "$timeout_warning" \
         --argjson remaining_ms "$remaining_ms" \
         --argjson timeout_pct "$timeout_pct" \
-        '{name: $name, status: $status, started_at: $started, elapsed_ms: $elapsed, cost: $cost, timeout_ms: $timeout_ms, timeout_warning: ($timeout_warning == "true"), remaining_ms: $remaining_ms, timeout_pct: $timeout_pct}')
+        '{id: $id, name: $name, status: $status, started_at: $started, elapsed_ms: $elapsed, cost: $cost, timeout_ms: $timeout_ms, timeout_warning: ($timeout_warning == "true"), remaining_ms: $remaining_ms, timeout_pct: $timeout_pct}')
 
     # Use atomic_json_update for race-free updates
     atomic_json_update "$PROGRESS_FILE" \
         --argjson agent "$agent_record" \
-        '.agents += [$agent]' || {
+        '.agents = ([.agents[] | select(.id != $agent.id)] + [$agent])' || {
         log WARN "Failed to update agent status for $agent_name"
         return 1
     }
