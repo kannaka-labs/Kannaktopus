@@ -159,6 +159,14 @@ ${provider_ctx}"
         fi
     fi
 
+    # Resolve the command before recording any metrics, so an unmapped agent type
+    # does not leave a started-but-never-completed call behind.
+    local cmd
+    cmd=$(get_agent_command "$agent_type" "$phase" "$role") || {
+        log ERROR "No command mapping for agent type '$agent_type'"
+        return 1
+    }
+
     record_agent_call "$agent_type" "$model" "$enhanced_prompt" "${phase:-unknown}" "${role:-none}" "0"
 
     # v7.25.0: Record metrics start
@@ -166,9 +174,6 @@ ${provider_ctx}"
     if command -v record_agent_start &> /dev/null; then
         metrics_id=$(record_agent_start "$agent_type" "$model" "$enhanced_prompt" "${phase:-unknown}") || true
     fi
-
-    local cmd
-    cmd=$(get_agent_command "$agent_type" "$phase" "$role") || return 1
 
     # SECURITY: Use array-based execution to prevent word-splitting vulnerabilities
     local -a cmd_array
