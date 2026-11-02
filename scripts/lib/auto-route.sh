@@ -18,6 +18,9 @@ match_routing_rule() {
 
     local prompt_lower
     prompt_lower=$(echo "$prompt" | tr '[:upper:]' '[:lower:]')
+    # Normalize punctuation to spaces so keywords match at word boundaries
+    local prompt_norm
+    prompt_norm=$(tr -cs '[:alnum:]' ' ' <<<"$prompt_lower")
 
     local i=0
     while [[ $i -lt $rule_count ]]; do
@@ -36,8 +39,14 @@ match_routing_rule() {
         # Match by keywords (any keyword match)
         if [[ -n "$match_keywords" && "$matched" == "false" ]]; then
             local keyword
+            match_keywords=$(tr '[:upper:]' '[:lower:]' <<<"$match_keywords")
             for keyword in $match_keywords; do
-                if [[ " ${prompt_lower//$'\n'/ } " == *" $keyword "* ]]; then
+                # Normalize like the prompt, so "ci/cd" or "ci-cd" in a rule still matches
+                keyword="${keyword//[^[:alnum:]]/ }"
+                while [[ "$keyword" == *"  "* ]]; do keyword="${keyword//  / }"; done
+                keyword="${keyword# }"; keyword="${keyword% }"
+                [[ -z "$keyword" ]] && continue
+                if [[ " $prompt_norm " == *" ${keyword} "* ]]; then
                     matched=true
                     break
                 fi
