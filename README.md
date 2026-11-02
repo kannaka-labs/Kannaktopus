@@ -12,6 +12,8 @@
 
 Ghost-frequency multi-agent orchestrator. Eight AI models resonate on every task — blind spots surface as interference patterns before you ship. Powered by the Holographic Resonance Medium.
 
+Kannaktopus is a derivative of [claude-octopus](https://github.com/nyldn/claude-octopus) by nyldn (MIT). It started from that codebase, and most of its history is upstream's; see [THIRD_PARTY.md](THIRD_PARTY.md).
+
 <p align="center">
   <img src="https://img.shields.io/badge/Version-10.3.0-blueviolet" alt="Version 10.3.0">
   <img src="https://img.shields.io/badge/License-Space_Child_v1.0-blueviolet" alt="Space Child License">
@@ -196,8 +198,12 @@ Kannaktopus is part of the Kannaka constellation of projects:
 
 ## Attribution
 
+Built on [claude-octopus](https://github.com/nyldn/claude-octopus), Copyright (c) 2026 nyldn, MIT License (full text in [LICENSE.upstream](LICENSE.upstream)).
+
 AI Debate Hub by [wolverin0](https://github.com/wolverin0/claude-skills) (MIT License) — four-way AI debate framework.
 
 ## License
 
 [Space Child License v1.0](https://legal.spacechild.love) — free for peaceful use.
+
+The portions that come from claude-octopus remain under the MIT License ([LICENSE.upstream](LICENSE.upstream)); see [NOTICE](NOTICE) and [THIRD_PARTY.md](THIRD_PARTY.md).
