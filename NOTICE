@@ -15,3 +15,14 @@ language governing permissions, conditions, and limitations under the
 License.
 
 This work is free for peaceful use. War pays.
+
+Upstream
+--------
+
+Kannaktopus is derived from claude-octopus
+(https://github.com/nyldn/claude-octopus), Copyright (c) 2026 nyldn,
+licensed under the MIT License. The full MIT text and copyright notice are
+in LICENSE.upstream. The portions that come from claude-octopus remain
+available under the MIT License; the Space Child License above applies to
+Kannaka Labs' modifications and additions. Other third-party components
+and their licenses are listed in THIRD_PARTY.md.
