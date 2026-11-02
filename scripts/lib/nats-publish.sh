@@ -134,6 +134,12 @@ nats_publish() {
 # All string fields are JSON-escaped. `extra_json` is treated as a raw JSON
 # fragment (object/array/scalar) — caller is responsible for it being valid
 # JSON. Pass nothing or an empty string to omit it.
+#
+# When `extra_json` is an object its keys are merged into the top level of the
+# event (status, workflow, completed, total, metrics, ...). schema_version, ts,
+# agent_id, armId, phase and taskId always win over a caller key of the same
+# name. The object is ALSO copied under "extra" for one release (deprecated).
+# Non-object extras (array/scalar) are only carried under "extra".
 nats_publish_phase() {
     local phase="$1"
     local task_id="${2:-}"
@@ -155,6 +161,35 @@ nats_publish_phase() {
     if [[ -n "$extra" ]]; then
         payload=$(printf '{%s,"armId":"%s","phase":"%s","taskId":"%s","extra":%s}' \
             "$envelope" "$arm_id_e" "$phase_e" "$task_e" "$extra")
+        # #93: merge the caller's object into the TOP level of the event (the
+        # Queen Console reads status/workflow/completed/total/metrics there).
+        # DEPRECATED: the "extra" copy below is kept for ONE release so
+        # existing consumers that read .extra.* keep working; remove it after.
+        if command -v jq >/dev/null 2>&1; then
+            # $e is the caller's object; "+" is right-biased, so $p (envelope,
+            # identity keys and the "extra" copy) overrides it.
+            local merged
+            if merged=$(jq -cn --argjson p "$payload" --argjson e "$extra" \
+                'if ($e | type) == "object" then $e + $p else $p end' 2>/dev/null) \
+                && [[ -n "$merged" ]]; then
+                payload="$merged"
+            fi
+        else
+            # No jq: jq is the main path; only here can a key repeat in the
+            # event. Splice the object's members in FRONT of ours. Our keys
+            # come last, so parsers that keep the last duplicate (all common
+            # ones) let envelope/armId/phase/taskId win over a caller key.
+            local trimmed inner
+            trimmed="${extra#"${extra%%[![:space:]]*}"}"
+            trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+            if [[ "$trimmed" == \{*\} ]]; then
+                inner="${trimmed:1:${#trimmed}-2}"
+                if [[ "$inner" =~ [^[:space:]] ]]; then
+                    payload=$(printf '{%s,%s,"armId":"%s","phase":"%s","taskId":"%s","extra":%s}' \
+                        "$inner" "$envelope" "$arm_id_e" "$phase_e" "$task_e" "$extra")
+                fi
+            fi
+        fi
     else
         payload=$(printf '{%s,"armId":"%s","phase":"%s","taskId":"%s"}' \
             "$envelope" "$arm_id_e" "$phase_e" "$task_e")
