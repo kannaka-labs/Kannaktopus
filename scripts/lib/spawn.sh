@@ -459,6 +459,9 @@ ${heuristic_ctx}"
         echo "" >> "$result_file"
         echo "## Output" >> "$result_file"
         echo '```' >> "$result_file"
+        # Lines written so far: the header, which embeds the whole prompt
+        local header_lines
+        header_lines=$(wc -l < "$result_file")
 
         # SECURITY: Use array-based execution to prevent word-splitting vulnerabilities
         # v8.32.0: Per-provider credential isolation — each agent only sees its own API key
@@ -556,9 +559,12 @@ ${heuristic_ctx}"
             log "INFO" "Auth retries used: $auth_attempt/$max_auth_retries (backend=$OCTOPUS_BACKEND, exit=$exit_code)"
         fi
 
-        # v8.32: Skip CLI output capture if SubagentStop hook already wrote the result
+        # v8.32: Skip CLI output capture if SubagentStop hook already wrote the result.
+        # Only lines after the header count: a prompt that quotes the marker must
+        # not discard the agent's output and leave the result without a status.
         local _hook_captured=false
-        if [[ "$SUPPORTS_HOOK_LAST_MESSAGE" == "true" ]] && grep -q "Capture: SubagentStop hook" "$result_file" 2>/dev/null; then
+        if [[ "$SUPPORTS_HOOK_LAST_MESSAGE" == "true" ]] && \
+           tail -n "+$((header_lines + 1))" "$result_file" 2>/dev/null | grep -q '^## Capture: SubagentStop hook'; then
             _hook_captured=true
             log "DEBUG" "Result already captured by SubagentStop hook, skipping CLI output parse"
         fi
