@@ -113,7 +113,9 @@ EOF
     local max_attempts=2  # Initial + 1 retry on 429
 
     while (( attempt < max_attempts )); do
-        raw_response=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+        # The body goes on stdin: as a -d argument a large prompt exceeds the
+        # argv limit (about 32 KB for native curl on Windows) (#128).
+        raw_response=$(printf '%s' "$payload" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
             --max-time 180 \
             -w "%{http_code}" \
             -D "$header_file" \
@@ -122,8 +124,8 @@ EOF
             -H "Connection: keep-alive" \
             -H "HTTP-Referer: https://github.com/NickFlach/Kannaktopus" \
             -H "X-Title: Kannaktopus" \
-            -d "$payload") || {
-            log ERROR "OpenRouter curl failed (timeout or network error, model=$model)"
+            --data-binary @-) || {
+            log ERROR "OpenRouter curl failed (curl exit $?, model=$model)"
             rm -f "$header_file"
             return 1
         }
@@ -265,12 +267,12 @@ EOF
 )
 
     local response
-    response=$(curl -s -X POST "https://api.perplexity.ai/v1/responses" \
+    response=$(printf '%s' "$payload" | curl -s -X POST "https://api.perplexity.ai/v1/responses" \
         --max-time 180 \
         -H "Authorization: Bearer ${PERPLEXITY_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "Connection: keep-alive" \
-        -d "$payload")
+        --data-binary @-)
 
     # Extract the message text from the Responses-format reply
     local content=""
