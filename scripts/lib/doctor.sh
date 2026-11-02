@@ -38,10 +38,10 @@ cmd_update_clis() {
         local codex_ver
         codex_ver=$(codex --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
         echo -e "  ${GREEN}✓${NC} Codex CLI updated to v${codex_ver}"
-        ((updated++))
+        updated=$((updated + 1))
     else
         echo -e "  ${RED}✗${NC} Codex CLI update failed. Try manually: npm install -g @openai/codex"
-        ((failed++))
+        failed=$((failed + 1))
     fi
     echo ""
 
@@ -51,10 +51,10 @@ cmd_update_clis() {
         local gemini_ver
         gemini_ver=$(gemini --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
         echo -e "  ${GREEN}✓${NC} Gemini CLI updated to v${gemini_ver}"
-        ((updated++))
+        updated=$((updated + 1))
     else
         echo -e "  ${RED}✗${NC} Gemini CLI update failed. Try manually: npm install -g @google/gemini-cli"
-        ((failed++))
+        failed=$((failed + 1))
     fi
     echo ""
 
