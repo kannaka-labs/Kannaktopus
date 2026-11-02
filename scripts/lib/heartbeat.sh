@@ -126,6 +126,23 @@ cleanup_heartbeat() {
     rm -f "${WORKSPACE_DIR}/.octo/agents/${pid}.heartbeat"
 }
 
+# Start a watchdog that sends TERM to $1 (a pid, or -pgid for a process
+# group) after $2 seconds; its pid is left in REPLY. It runs off the caller's
+# pipes: a sleep still holding the pipeline's stdout kept
+# `run_with_timeout … | tee` open for the full timeout after the command had
+# finished (#127). Killing the watchdog also kills its sleep.
+_run_with_timeout_watchdog() {
+    local target="$1" secs="$2"
+    (
+        sleep_pid=""
+        trap '[[ -n "$sleep_pid" ]] && kill "$sleep_pid" 2>/dev/null; exit 0' TERM
+        sleep "$secs" &
+        sleep_pid=$!
+        wait "$sleep_pid" && kill -TERM -- "$target" 2>/dev/null
+    ) </dev/null >/dev/null 2>&1 &
+    REPLY=$!
+}
+
 # Portable timeout function (works on macOS and Linux)
 # Prefers system timeout commands, falls back to manual implementation
 run_with_timeout() {
@@ -141,13 +158,19 @@ run_with_timeout() {
     # Windows. Those arms only ever worked on hosts WITHOUT timeout. Run
     # functions through the in-shell fallback instead.
     if declare -F "$1" &>/dev/null; then
-        local fn_pid fn_monitor_pid
+        local fn_pid fn_monitor_pid had_job_control=false
+        [[ $- == *m* ]] && had_job_control=true
         # `<&0` keeps the caller's stdin (the piped prompt): a plain
         # background job in a non-interactive shell gets /dev/null instead.
+        # Job control puts the function in its own process group, so the
+        # timeout also kills the curl it is waiting on; killing only the
+        # function's subshell left curl holding the pipeline open (#127).
+        set -m
         "$@" <&0 &
         fn_pid=$!
-        ( sleep "$timeout_secs" && kill -TERM "$fn_pid" 2>/dev/null ) &
-        fn_monitor_pid=$!
+        [[ "$had_job_control" == true ]] || set +m
+        _run_with_timeout_watchdog "-$fn_pid" "$timeout_secs"
+        fn_monitor_pid=$REPLY
         if wait "$fn_pid" 2>/dev/null; then
             exit_code=0
         else
@@ -169,8 +192,8 @@ run_with_timeout() {
         "$@" &
         cmd_pid=$!
 
-        ( sleep "$timeout_secs" && kill -TERM "$cmd_pid" 2>/dev/null ) &
-        monitor_pid=$!
+        _run_with_timeout_watchdog "$cmd_pid" "$timeout_secs"
+        monitor_pid=$REPLY
 
         if wait "$cmd_pid" 2>/dev/null; then
             exit_code=0
