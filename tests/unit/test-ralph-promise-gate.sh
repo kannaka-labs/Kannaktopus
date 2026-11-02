@@ -24,7 +24,9 @@ DRY_RUN=false
 WORKSPACE_DIR="$TMP/ws"; mkdir -p "$WORKSPACE_DIR"
 sleep() { :; }
 
-# Source (tolerate CRLF checkouts)
+# Source (tolerate CRLF checkouts); heartbeat.sh provides run_with_timeout, as in orchestrate.sh
+# shellcheck disable=SC1090
+source <(tr -d '\r' < "$PROJECT_ROOT/scripts/lib/heartbeat.sh")
 # shellcheck disable=SC1090
 source <(tr -d '\r' < "$LIB")
 

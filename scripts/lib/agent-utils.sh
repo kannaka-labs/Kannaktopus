@@ -331,7 +331,7 @@ ralph_promise_accepted() {
     fi
     # The command comes from the prompt, so it runs bounded by a timeout
     if test_cmd=$(ralph_extract_test_command "$prompt"); then
-        if timeout "${RALPH_TEST_TIMEOUT:-300}" bash -c "$test_cmd" &>/dev/null; then
+        if run_with_timeout "${RALPH_TEST_TIMEOUT:-300}" bash -c "$test_cmd" &>/dev/null; then
             return 0
         fi
         log WARN "Ralph: completion promise rejected - no changes and test command failed: $test_cmd"
@@ -396,7 +396,7 @@ Output $promise when the task is truly complete."
         snapshot_before=$(ralph_workspace_snapshot)
 
         # Run agent
-        output=$(run_agent_sync "$agent_type" "$iteration_prompt" 300)
+        output=$(run_agent_sync "$agent_type" "$iteration_prompt" 300) || true
 
         snapshot_after=$(ralph_workspace_snapshot)
 
@@ -454,7 +454,8 @@ run_with_claude_code_ralph() {
     # Check if ralph-wiggum plugin is installed
     if claude plugin list 2>/dev/null | grep -q "ralph-wiggum"; then
         # Use actual ralph-wiggum
-        claude "/ralph-loop \"$prompt\" --max-iterations $max_iterations --completion-promise \"$promise\""
+        local p=${prompt//\\/\\\\}; p=${p//\"/\\\"}
+        claude "/ralph-loop \"$p\" --max-iterations $max_iterations --completion-promise \"$promise\""
     else
         # Use Claude Code with manual iteration prompt
         local iteration_prompt="$prompt
