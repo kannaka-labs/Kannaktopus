@@ -12,9 +12,72 @@
 # Extracted from orchestrate.sh (v9.7.8)
 # Source-safe: no main execution block.
 
+# Is a fleet arm usable right now? Claude arms are always available;
+# CLI arms need their binary, API arms need their key.
+_fleet_agent_available() {
+    case "$1" in
+        codex*)       command -v codex >/dev/null 2>&1 && ! { type codex_blocked_on_windows &>/dev/null && codex_blocked_on_windows; } ;;
+        gemini*)      command -v gemini >/dev/null 2>&1 ;;
+        claude*)      return 0 ;;
+        openrouter*)  [[ -n "${OPENROUTER_API_KEY:-}" ]] ;;
+        perplexity*)  [[ -n "${PERPLEXITY_API_KEY:-}" ]] ;;
+        copilot*)     command -v copilot >/dev/null 2>&1 ;;
+        qwen*)        command -v qwen >/dev/null 2>&1 ;;
+        ollama)       command -v ollama >/dev/null 2>&1 ;;
+        *)            return 1 ;;
+    esac
+}
+
+# Resolve the fleet, one agent per line. With arguments, those agents are the
+# candidates; otherwise the provider list probe_discover uses.
+# Unavailable arms are skipped; falls back to claude-sonnet if none remain.
+resolve_fleet_agents() {
+    local candidates=()
+    if [[ $# -gt 0 ]]; then
+        candidates=("$@")
+    else
+        # Same provider list probe_discover uses (get_dispatch_strategy), plus
+        # the Claude and keyed API arms; availability is filtered below.
+        local _ds="" _dp=""
+        if type get_dispatch_strategy &>/dev/null; then
+            _ds=$(get_dispatch_strategy "" "research" 2>/dev/null) || _ds=""
+            _dp=$(echo "$_ds" | cut -d: -f2)
+        fi
+        if [[ -n "$_dp" ]]; then
+            local _sp=()
+            IFS=',' read -ra _sp <<< "$_dp"
+            candidates=("${_sp[@]}")
+        else
+            candidates=(codex gemini)
+        fi
+        candidates+=(claude-sonnet openrouter perplexity)
+    fi
+
+    local resolved=() a r dup
+    for a in "${candidates[@]}"; do
+        [[ -z "$a" ]] && continue
+        if ! _fleet_agent_available "$a"; then
+            log DEBUG "Fleet: skipping unavailable agent '$a'"
+            continue
+        fi
+        dup=false
+        for r in "${resolved[@]+"${resolved[@]}"}"; do
+            [[ "$r" == "$a" ]] && dup=true
+        done
+        [[ "$dup" == "true" ]] || resolved+=("$a")
+    done
+    [[ ${#resolved[@]} -eq 0 ]] && resolved=("claude-sonnet")
+    printf '%s\n' "${resolved[@]}"
+}
+
 fan_out() {
     local prompt="$1"
-    local agents=("codex" "gemini")
+    shift || true
+    local agents=()
+    local _fa
+    while IFS= read -r _fa; do
+        [[ -n "$_fa" ]] && agents+=("$_fa")
+    done < <(resolve_fleet_agents "$@")
     local pids=()
     local task_group
     task_group=$(date +%s)
@@ -176,6 +239,7 @@ parallel_execute() {
 
 map_reduce() {
     local main_prompt="$1"
+    shift || true
     local task_group
     task_group=$(date +%s)
 
@@ -195,7 +259,7 @@ Output as a simple numbered list. Task: $main_prompt"
 
     gemini "$decompose_prompt" > "$decompose_result" 2>&1 || {
         log WARN "Decomposition failed, falling back to fan-out"
-        fan_out "$main_prompt"
+        fan_out "$main_prompt" "$@"
         return
     }
 
@@ -205,7 +269,11 @@ Output as a simple numbered list. Task: $main_prompt"
 
     log INFO "Phase 2: Mapping subtasks to agents"
     local subtask_num=0
-    local agents=("codex" "gemini")
+    local agents=()
+    local _ma
+    while IFS= read -r _ma; do
+        [[ -n "$_ma" ]] && agents+=("$_ma")
+    done < <(resolve_fleet_agents "$@")
 
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue

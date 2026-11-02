@@ -665,16 +665,29 @@ get_tiered_agent() {
             ;;
         review)
             # Reviews use standard tier (already cost-effective)
-            agent="codex-review"
+            # Route away from Codex on Windows (Issue #119)
+            if type codex_blocked_on_windows &>/dev/null && codex_blocked_on_windows; then
+                agent="claude-sonnet"
+            else
+                agent="codex-review"
+            fi
             ;;
         coding|general)
             # Coding tasks: tier based on adjusted complexity
-            case "$adjusted_complexity" in
-                1) agent="codex-mini" ;;      # Trivial → mini (cheapest)
-                2) agent="codex-standard" ;;  # Standard → standard tier
-                3) agent="codex" ;;           # Complex → premium
-                *) agent="codex-standard" ;;
-            esac
+            # Route away from Codex on Windows (Issue #119)
+            if type codex_blocked_on_windows &>/dev/null && codex_blocked_on_windows; then
+                case "$adjusted_complexity" in
+                    3) agent="claude-opus" ;;      # same as get_role_mapping
+                    *) agent="claude-sonnet" ;;
+                esac
+            else
+                case "$adjusted_complexity" in
+                    1) agent="codex-mini" ;;      # Trivial → mini (cheapest)
+                    2) agent="codex-standard" ;;  # Standard → standard tier
+                    3) agent="codex" ;;           # Complex → premium
+                    *) agent="codex-standard" ;;
+                esac
+            fi
             ;;
         design|copywriting|research)
             # Gemini tasks: tier based on complexity
