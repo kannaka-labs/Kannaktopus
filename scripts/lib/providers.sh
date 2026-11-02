@@ -677,6 +677,9 @@ check_all_providers() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Select OpenRouter model based on task type
+# OpenRouter model ids. They must match ids OpenRouter lists (GET /api/v1/models):
+# "anthropic/claude-sonnet-4", "anthropic/claude-opus-4-6" and a bare
+# "anthropic/claude-haiku" return HTTP 404, which made every openrouter spawn fail.
 get_openrouter_model() {
     local task_type="$1"
     local complexity="${2:-2}"
@@ -692,19 +695,19 @@ get_openrouter_model() {
     case "$task_type" in
         coding|review)
             case "$complexity" in
-                3) echo "anthropic/claude-opus-4-6${routing_suffix}" ;;   # v8.0: Opus for premium
-                1) echo "anthropic/claude-haiku${routing_suffix}" ;;
-                *) echo "anthropic/claude-sonnet-4${routing_suffix}" ;;
+                3) echo "anthropic/claude-opus-4.6${routing_suffix}" ;;   # v8.0: Opus for premium
+                1) echo "anthropic/claude-haiku-4.5${routing_suffix}" ;;
+                *) echo "anthropic/claude-sonnet-4.6${routing_suffix}" ;;
             esac
             ;;
         image)
             echo "google/gemini-2.0-flash${routing_suffix}"
             ;;
         research|design)
-            echo "anthropic/claude-sonnet-4${routing_suffix}"
+            echo "anthropic/claude-sonnet-4.6${routing_suffix}"
             ;;
         *)
-            echo "anthropic/claude-sonnet-4${routing_suffix}"
+            echo "anthropic/claude-sonnet-4.6${routing_suffix}"
             ;;
     esac
 }
