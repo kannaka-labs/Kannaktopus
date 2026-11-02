@@ -139,6 +139,7 @@ enforce_context_budget() {
     local prompt="$1"
     local role="${2:-}"
     local budget="${OCTOPUS_CONTEXT_BUDGET:-12000}"
+    [[ $budget =~ ^[1-9][0-9]*$ ]] || { log WARN "invalid OCTOPUS_CONTEXT_BUDGET"; budget=12000; }
 
     # v9.3.0: Scale budget by role proportion
     if [[ -n "$role" ]]; then
@@ -152,11 +153,9 @@ enforce_context_budget() {
 
     if [[ ${#prompt} -gt $char_budget ]]; then
         log "DEBUG" "Context budget: truncating prompt from ${#prompt} to $char_budget chars (~$budget tokens)"
-        echo "${prompt:0:$char_budget}
-
-[... truncated to fit context budget of ~$budget tokens ...]"
+        printf '%s\n\n%s\n' "${prompt:0:$char_budget}" "[... truncated to fit context budget of ~$budget tokens ...]"
     else
-        echo "$prompt"
+        printf '%s\n' "$prompt"
     fi
 }
 
@@ -217,6 +216,7 @@ validate_model_allowed() {
 
     local allowlist="${!allowlist_var:-}"
     [[ -z "$allowlist" ]] && return 0  # No allowlist = all allowed
+    allowlist=${allowlist//[[:space:]]/}
 
     # Check if model is in comma-separated allowlist
     # v9.5: bash builtin substring check (zero subshells, was echo|grep)
