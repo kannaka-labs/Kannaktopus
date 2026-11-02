@@ -3437,7 +3437,7 @@ case "$COMMAND" in
             esac
         done
 
-        grapple_debate "$@" "$principles" "$rounds" "$debate_mode"
+        grapple_debate "$*" "$principles" "$rounds" "$debate_mode"
         ;;
     squeeze|red-team)
         # Red Team security review: Blue Team defends, Red Team attacks

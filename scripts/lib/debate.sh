@@ -13,7 +13,7 @@ grapple_debate() {
     local rounds="${3:-3}"  # v7.13.2: Configurable rounds (default 3)
     local debate_mode="${4:-cross-critique}"  # v8.31.0: cross-critique (ACH) or blinded (independent)
     local task_group
-    task_group=$(date +%s)
+    task_group="$(date +%s)-$$-$RANDOM"
 
     # Validate rounds (3-7 allowed)
     if [[ $rounds -lt 3 ]]; then
@@ -86,7 +86,7 @@ DEBATE INTEGRITY RULES (MANDATORY — follow these in every response):
 - PROPORTIONAL: A minor style issue is NOT a critical flaw. A fundamental architecture mistake is NOT a 'minor concern'. Calibrate severity honestly."
 
     local codex_proposal gemini_proposal sonnet_proposal
-    codex_proposal=$(run_agent_sync "codex" "
+    if ! codex_proposal=$(run_agent_sync "codex" "
 $no_explore_constraint
 
 You are formulating a HYPOTHESIS. Propose your best approach to this task:
@@ -102,9 +102,7 @@ Structure your response:
 4. IMPLEMENTATION: Your concrete implementation
 
 $debate_integrity_rules
-Be thorough and practical." 120 "implementer" "grapple")
-
-    if [[ $? -ne 0 || -z "$codex_proposal" ]]; then
+Be thorough and practical." 120 "implementer" "grapple") || [[ -z "$codex_proposal" ]]; then
         echo ""
         echo -e "${RED}❌ Codex proposal generation failed${NC}"
         echo -e "   Check logs: ${LOGS_DIR}/"
@@ -112,7 +110,7 @@ Be thorough and practical." 120 "implementer" "grapple")
         return 1
     fi
 
-    gemini_proposal=$(run_agent_sync "gemini" "
+    if ! gemini_proposal=$(run_agent_sync "gemini" "
 $no_explore_constraint
 
 You are formulating a HYPOTHESIS. Propose your best approach to this task:
@@ -128,9 +126,7 @@ Structure your response:
 4. IMPLEMENTATION: Your concrete implementation
 
 $debate_integrity_rules
-Be thorough and practical." 120 "researcher" "grapple")
-
-    if [[ $? -ne 0 || -z "$gemini_proposal" ]]; then
+Be thorough and practical." 120 "researcher" "grapple") || [[ -z "$gemini_proposal" ]]; then
         echo ""
         echo -e "${RED}❌ Gemini proposal generation failed${NC}"
         echo -e "   Check logs: ${LOGS_DIR}/"
@@ -138,7 +134,7 @@ Be thorough and practical." 120 "researcher" "grapple")
         return 1
     fi
 
-    sonnet_proposal=$(run_agent_sync "claude-sonnet" "
+    if ! sonnet_proposal=$(run_agent_sync "claude-sonnet" "
 $no_explore_constraint
 
 You are formulating a HYPOTHESIS. Propose your best approach to this task:
@@ -154,9 +150,7 @@ Structure your response:
 4. IMPLEMENTATION: Your concrete implementation
 
 $debate_integrity_rules
-Be thorough and practical." 120 "researcher" "grapple")
-
-    if [[ $? -ne 0 || -z "$sonnet_proposal" ]]; then
+Be thorough and practical." 120 "researcher" "grapple") || [[ -z "$sonnet_proposal" ]]; then
         echo ""
         echo -e "${RED}❌ Sonnet proposal generation failed${NC}"
         echo -e "   Check logs: ${LOGS_DIR}/"
@@ -183,7 +177,7 @@ Be thorough and practical." 120 "researcher" "grapple")
         # ── BLINDED MODE: Each model evaluates independently against criteria ──
         # No model sees another's proposals — prevents anchoring bias
 
-        codex_critique=$(run_agent_sync "codex-review" "
+        if ! codex_critique=$(run_agent_sync "codex-review" "
 $no_explore_constraint
 
 You are an INDEPENDENT EVALUATOR. You have NOT seen any other model's proposals.
@@ -200,15 +194,13 @@ Provide your INDEPENDENT assessment:
 - OVERLOOKED CONCERNS: What do teams typically miss when solving this?
 - CRITICAL ASSUMPTIONS: What assumptions would need to be true for any solution to work?
 - EVALUATION CRITERIA: How should solutions be judged? Rate each criterion by importance (1-10).
-$debate_integrity_rules" 90 "code-reviewer" "grapple")
-
-        if [[ $? -ne 0 || -z "$codex_critique" ]]; then
+$debate_integrity_rules" 90 "code-reviewer" "grapple") || [[ -z "$codex_critique" ]]; then
             echo -e "${RED}❌ Codex evaluation failed${NC}"
             log ERROR "Grapple debate failed: Codex blinded evaluation empty or error"
             return 1
         fi
 
-        gemini_critique=$(run_agent_sync "gemini" "
+        if ! gemini_critique=$(run_agent_sync "gemini" "
 $no_explore_constraint
 
 You are an INDEPENDENT EVALUATOR. You have NOT seen any other model's proposals.
@@ -225,15 +217,13 @@ Provide your INDEPENDENT assessment:
 - OVERLOOKED CONCERNS: What do teams typically miss when solving this?
 - CRITICAL ASSUMPTIONS: What assumptions would need to be true for any solution to work?
 - EVALUATION CRITERIA: How should solutions be judged? Rate each criterion by importance (1-10).
-$debate_integrity_rules" 90 "security-auditor" "grapple")
-
-        if [[ $? -ne 0 || -z "$gemini_critique" ]]; then
+$debate_integrity_rules" 90 "security-auditor" "grapple") || [[ -z "$gemini_critique" ]]; then
             echo -e "${RED}❌ Gemini evaluation failed${NC}"
             log ERROR "Grapple debate failed: Gemini blinded evaluation empty or error"
             return 1
         fi
 
-        sonnet_critique=$(run_agent_sync "claude-sonnet" "
+        if ! sonnet_critique=$(run_agent_sync "claude-sonnet" "
 $no_explore_constraint
 
 You are an INDEPENDENT EVALUATOR. You have NOT seen any other model's proposals.
@@ -250,9 +240,7 @@ Provide your INDEPENDENT assessment:
 - OVERLOOKED CONCERNS: What do teams typically miss when solving this?
 - CRITICAL ASSUMPTIONS: What assumptions would need to be true for any solution to work?
 - EVALUATION CRITERIA: How should solutions be judged? Rate each criterion by importance (1-10).
-$debate_integrity_rules" 90 "code-reviewer" "grapple")
-
-        if [[ $? -ne 0 || -z "$sonnet_critique" ]]; then
+$debate_integrity_rules" 90 "code-reviewer" "grapple") || [[ -z "$sonnet_critique" ]]; then
             echo -e "${RED}❌ Sonnet evaluation failed${NC}"
             log ERROR "Grapple debate failed: Sonnet blinded evaluation empty or error"
             return 1
@@ -262,7 +250,7 @@ $debate_integrity_rules" 90 "code-reviewer" "grapple")
         # ── CROSS-CRITIQUE MODE (default): ACH falsification ──
 
         # Codex falsifies Gemini + Sonnet hypotheses
-        codex_critique=$(run_agent_sync "codex-review" "
+        if ! codex_critique=$(run_agent_sync "codex-review" "
 $no_explore_constraint
 
 You are a FALSIFIER using Analysis of Competing Hypotheses (ACH). Your job is to DISPROVE these proposals by testing their stated assumptions.
@@ -283,16 +271,14 @@ ${principle_text:+Evaluate against these principles:
 $principle_text}
 
 Focus on falsification, not preference. An approach with unfalsified assumptions is stronger than one that 'feels better'.
-$debate_integrity_rules" 90 "code-reviewer" "grapple")
-
-        if [[ $? -ne 0 || -z "$codex_critique" ]]; then
+$debate_integrity_rules" 90 "code-reviewer" "grapple") || [[ -z "$codex_critique" ]]; then
             echo -e "${RED}❌ Codex critique generation failed${NC}"
             log ERROR "Grapple debate failed: Codex critique empty or error"
             return 1
         fi
 
         # Gemini falsifies Codex + Sonnet hypotheses
-        gemini_critique=$(run_agent_sync "gemini" "
+        if ! gemini_critique=$(run_agent_sync "gemini" "
 $no_explore_constraint
 
 You are a FALSIFIER using Analysis of Competing Hypotheses (ACH). Your job is to DISPROVE these proposals by testing their stated assumptions.
@@ -313,16 +299,14 @@ ${principle_text:+Evaluate against these principles:
 $principle_text}
 
 Focus on falsification, not preference. An approach with unfalsified assumptions is stronger than one that 'feels better'.
-$debate_integrity_rules" 90 "security-auditor" "grapple")
-
-        if [[ $? -ne 0 || -z "$gemini_critique" ]]; then
+$debate_integrity_rules" 90 "security-auditor" "grapple") || [[ -z "$gemini_critique" ]]; then
             echo -e "${RED}❌ Gemini critique generation failed${NC}"
             log ERROR "Grapple debate failed: Gemini critique empty or error"
             return 1
         fi
 
         # Sonnet falsifies Codex + Gemini hypotheses
-        sonnet_critique=$(run_agent_sync "claude-sonnet" "
+        if ! sonnet_critique=$(run_agent_sync "claude-sonnet" "
 $no_explore_constraint
 
 You are a FALSIFIER using Analysis of Competing Hypotheses (ACH). Your job is to DISPROVE these proposals by testing their stated assumptions.
@@ -342,9 +326,7 @@ For each hypothesis, attempt to falsify it:
 ${principle_text:+Evaluate against these principles:
 $principle_text}
 
-$debate_integrity_rules" 90 "code-reviewer" "grapple")
-
-        if [[ $? -ne 0 || -z "$sonnet_critique" ]]; then
+$debate_integrity_rules" 90 "code-reviewer" "grapple") || [[ -z "$sonnet_critique" ]]; then
             echo -e "${RED}❌ Sonnet critique generation failed${NC}"
             log ERROR "Grapple debate failed: Sonnet critique empty or error"
             return 1
@@ -362,7 +344,7 @@ $debate_integrity_rules" 90 "code-reviewer" "grapple")
 
             # Codex defends and refines
             local codex_rebuttal
-            codex_rebuttal=$(run_agent_sync "codex" "
+            if ! codex_rebuttal=$(run_agent_sync "codex" "
 $no_explore_constraint
 
 You are DEFENDING your implementation against critiques from Gemini and Sonnet.
@@ -382,9 +364,7 @@ Respond to both critiques by:
 3. Refining your approach based on valid feedback
 
 $debate_integrity_rules
-Be specific, technical, and constructive. Focus on improving the solution." 120 "implementer" "grapple")
-
-            if [[ $? -ne 0 || -z "$codex_rebuttal" ]]; then
+Be specific, technical, and constructive. Focus on improving the solution." 120 "implementer" "grapple") || [[ -z "$codex_rebuttal" ]]; then
                 echo ""
                 echo -e "${RED}❌ Codex rebuttal generation failed${NC}"
                 echo -e "   Check logs: ${LOGS_DIR}/"
@@ -394,7 +374,7 @@ Be specific, technical, and constructive. Focus on improving the solution." 120 
 
             # Gemini defends and refines
             local gemini_rebuttal
-            gemini_rebuttal=$(run_agent_sync "gemini" "
+            if ! gemini_rebuttal=$(run_agent_sync "gemini" "
 $no_explore_constraint
 
 You are DEFENDING your implementation against critiques from Codex and Sonnet.
@@ -414,9 +394,7 @@ Respond to both critiques by:
 3. Refining your approach based on valid feedback
 
 $debate_integrity_rules
-Be specific, technical, and constructive. Focus on improving the solution." 120 "researcher" "grapple")
-
-            if [[ $? -ne 0 || -z "$gemini_rebuttal" ]]; then
+Be specific, technical, and constructive. Focus on improving the solution." 120 "researcher" "grapple") || [[ -z "$gemini_rebuttal" ]]; then
                 echo ""
                 echo -e "${RED}❌ Gemini rebuttal generation failed${NC}"
                 echo -e "   Check logs: ${LOGS_DIR}/"
@@ -426,7 +404,7 @@ Be specific, technical, and constructive. Focus on improving the solution." 120 
 
             # Sonnet defends and refines
             local sonnet_rebuttal
-            sonnet_rebuttal=$(run_agent_sync "claude-sonnet" "
+            if ! sonnet_rebuttal=$(run_agent_sync "claude-sonnet" "
 $no_explore_constraint
 
 You are DEFENDING your implementation against critiques from Codex and Gemini.
@@ -446,9 +424,7 @@ Respond to both critiques by:
 3. Refining your approach based on valid feedback
 
 $debate_integrity_rules
-Be specific, technical, and constructive. Focus on improving the solution." 120 "researcher" "grapple")
-
-            if [[ $? -ne 0 || -z "$sonnet_rebuttal" ]]; then
+Be specific, technical, and constructive. Focus on improving the solution." 120 "researcher" "grapple") || [[ -z "$sonnet_rebuttal" ]]; then
                 echo ""
                 echo -e "${RED}❌ Sonnet rebuttal generation failed${NC}"
                 echo -e "   Check logs: ${LOGS_DIR}/"
@@ -609,9 +585,7 @@ TASK: Evaluate based on falsification survival. Provide:
 Be specific and actionable. Format as markdown."
     fi
 
-    synthesis=$(run_agent_sync "claude" "$synthesis_prompt" 150 "synthesizer" "grapple")
-
-    if [[ $? -ne 0 || -z "$synthesis" ]]; then
+    if ! synthesis=$(run_agent_sync "claude" "$synthesis_prompt" 150 "synthesizer" "grapple") || [[ -z "$synthesis" ]]; then
         echo ""
         echo -e "${RED}❌ Synthesis generation failed${NC}"
         echo -e "   Check logs: ${LOGS_DIR}/"
