@@ -46,7 +46,11 @@ get_dispatch_strategy() {
     command -v gemini >/dev/null 2>&1 && has_gemini=true
     command -v copilot >/dev/null 2>&1 && has_copilot=true
     command -v qwen >/dev/null 2>&1 && has_qwen=true
-    command -v ollama >/dev/null 2>&1 && curl -sf http://localhost:11434/api/tags &>/dev/null && has_ollama=true
+    # Probe the server the ollama CLI will use (OLLAMA_HOST), not always localhost
+    local ollama_url="${OLLAMA_HOST:-localhost:11434}"
+    [[ "$ollama_url" == http*://* ]] || ollama_url="http://${ollama_url}"
+    [[ "${ollama_url#*://}" == *:* ]] || ollama_url="${ollama_url}:11434"   # CLI default port
+    command -v ollama >/dev/null 2>&1 && curl -sf --max-time 2 "${ollama_url}/api/tags" &>/dev/null && has_ollama=true
 
     # Build available CLI providers list (excluding Claude which is always available)
     local -a cli_providers=()
@@ -54,6 +58,7 @@ get_dispatch_strategy() {
     [[ "$has_gemini" == true ]] && cli_providers+=(gemini)
     [[ "$has_copilot" == true ]] && cli_providers+=(copilot)
     [[ "$has_qwen" == true ]] && cli_providers+=(qwen)
+    [[ "$has_ollama" == true ]] && cli_providers+=(ollama)
     local cli_count=${#cli_providers[@]}
 
     case "$workflow" in
@@ -68,6 +73,7 @@ get_dispatch_strategy() {
             elif [[ "$has_codex" == true ]]; then echo "2:codex,claude-sonnet:high"
             elif [[ "$has_gemini" == true ]]; then echo "2:gemini,claude-sonnet:high"
             elif [[ "$has_qwen" == true ]]; then echo "2:qwen,claude-sonnet:medium"
+            elif [[ "$has_ollama" == true ]]; then echo "2:ollama,claude-sonnet:medium"
             else echo "1:claude-sonnet:medium"; fi ;;
         architecture)
             # Maximize training bias diversity
@@ -76,6 +82,7 @@ get_dispatch_strategy() {
             elif [[ "$has_codex" == true ]]; then echo "2:codex,claude-sonnet:medium"
             elif [[ "$has_gemini" == true ]]; then echo "2:gemini,claude-sonnet:medium"
             elif [[ "$has_qwen" == true ]]; then echo "2:qwen,claude-sonnet:medium"
+            elif [[ "$has_ollama" == true ]]; then echo "2:ollama,claude-sonnet:medium"
             else echo "1:claude-sonnet:low"; fi ;;
         research|*)
             # Research benefits from diverse perspectives
@@ -87,6 +94,7 @@ get_dispatch_strategy() {
             elif [[ "$has_codex" == true ]]; then echo "2:codex,claude-sonnet:medium"
             elif [[ "$has_qwen" == true ]]; then echo "2:qwen,claude-sonnet:medium"
             elif [[ "$has_copilot" == true ]]; then echo "2:copilot,claude-sonnet:medium"
+            elif [[ "$has_ollama" == true ]]; then echo "2:ollama,claude-sonnet:medium"
             else echo "1:claude-sonnet:medium"; fi ;;
     esac
 }
