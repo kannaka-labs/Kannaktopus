@@ -305,6 +305,8 @@ get_agent_config() {
         $0 ~ "^  " agent ":" { found=1; next }
         found && /^  [a-z]/ { found=0 }
         found && $0 ~ "^    " field ":" {
+            # Inline comment (#196); a quoted value containing " #" would be cut too
+            sub(/[[:space:]]+#.*/, "")
             gsub(/^[[:space:]]*[a-z_]+:[[:space:]]*/, "")
             gsub(/[\[\]"]/, "")
             gsub(/,/, " ")
