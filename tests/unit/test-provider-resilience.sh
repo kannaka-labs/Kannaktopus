@@ -156,6 +156,34 @@ else
   fail "is_provider_available returns true for fresh provider" "returned false"
 fi
 
+# ── backoff_delay: attempt validation ────────────────────────────────────────
+
+d0=$(backoff_delay 0) || d0=""
+if [[ "$d0" =~ ^[0-9]+$ ]] && (( d0 >= 1 )); then
+  pass "backoff_delay 0 prints integer >= 1"
+else
+  fail "backoff_delay 0 prints integer >= 1" "got '$d0'"
+fi
+d64=$(backoff_delay 64 1 30) || d64=""
+if [[ "$d64" =~ ^[0-9]+$ ]] && (( d64 >= 30 && d64 <= 38 )); then
+  pass "backoff_delay 64 1 30 within 30..38"
+else
+  fail "backoff_delay 64 1 30 within 30..38" "got '$d64'"
+fi
+
+# ── check_circuit_recovery: open without opened_at ───────────────────────────
+
+mkdir -p "$RESILIENCE_STATE_DIR"
+echo "open" > "$RESILIENCE_STATE_DIR/test-provider-noopen.state"
+rec=$(check_circuit_recovery "test-provider-noopen" 0) || rec=""
+assert_eq "$rec" "half-open" "open circuit without opened_at recovers to half-open"
+
+# ── record_failure: atomic under concurrency ─────────────────────────────────
+
+for _ in $(seq 20); do record_failure "test-provider-par" & done
+wait
+assert_eq "$(get_failure_count test-provider-par)" "20" "20 parallel record_failure calls count 20"
+
 # ── No attribution references ────────────────────────────────────────────────
 
 lib_content=$(<"$LIB")
