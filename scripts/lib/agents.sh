@@ -307,6 +307,9 @@ get_agent_config() {
         found && $0 ~ "^    " field ":" {
             gsub(/^[[:space:]]*[a-z_]+:[[:space:]]*/, "")
             gsub(/[\[\]"]/, "")
+            gsub(/,/, " ")
+            gsub(/[[:space:]]+/, " ")
+            gsub(/^ | $/, "")
             print
             exit
         }
