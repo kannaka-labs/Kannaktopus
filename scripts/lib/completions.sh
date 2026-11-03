@@ -120,17 +120,27 @@ complete -c orchestrate.sh -n "__fish_use_subcommand" -a "spawn" -d "Run single 
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "fan-out" -d "Same prompt to all agents"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "map-reduce" -d "Decompose, execute, synthesize"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "ralph" -d "Iterate until completion"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "iterate" -d "Iterate until completion"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "optimize" -d "Auto-detect optimization tasks"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "setup" -d "Interactive configuration"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "init" -d "Initialize workspace"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "status" -d "Show running agents"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "kill" -d "Kill running agents"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "clean" -d "Clean up workspace files"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "aggregate" -d "Aggregate agent results"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "preflight" -d "Run preflight checks"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "cost-json" -d "Usage report as JSON"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "cost-csv" -d "Usage report as CSV"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "cost-clear" -d "Clear usage data"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "login" -d "Log in to a provider"
+complete -c orchestrate.sh -n "__fish_use_subcommand" -a "logout" -d "Log out of a provider"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "cost" -d "Show usage report"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "auth" -d "Authentication management"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "completion" -d "Generate shell completion"
 complete -c orchestrate.sh -n "__fish_use_subcommand" -a "help" -d "Show help"
 
 # Spawn agents
-complete -c orchestrate.sh -n "__fish_seen_subcommand_from spawn" -a "codex codex-standard codex-max codex-mini gemini gemini-fast gemini-image codex-review"
+complete -c orchestrate.sh -n "__fish_seen_subcommand_from spawn" -a "codex codex-standard codex-max codex-mini codex-general gemini gemini-fast gemini-image codex-review"
 
 # Completion shells
 complete -c orchestrate.sh -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
@@ -148,6 +158,8 @@ complete -c orchestrate.sh -s p -l parallel -d "Max parallel agents" -r
 complete -c orchestrate.sh -s t -l timeout -d "Timeout per task" -r
 complete -c orchestrate.sh -s a -l autonomy -d "Autonomy mode" -ra "supervised semi-autonomous autonomous"
 complete -c orchestrate.sh -l tier -d "Force tier" -ra "trivial standard premium"
+complete -c orchestrate.sh -l branch -d "Branch mode" -r
+complete -c orchestrate.sh -l on-fail -d "Failure handling" -ra "auto retry escalate abort"
 complete -c orchestrate.sh -l no-personas -d "Disable agent personas"
 complete -c orchestrate.sh -s R -l resume -d "Resume session"
 complete -c orchestrate.sh -s h -l help -d "Show help"
