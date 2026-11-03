@@ -229,6 +229,31 @@ else
     fail "Functional: get_run_store_stats reports correct total" "wrong total"
 fi
 
+# ── No-jq fallback escaping (#175) ────────────────────────────────────────────
+
+NOJQ_HOME="$(mktemp -d)"
+NOJQ_OUT=$(HOME="$NOJQ_HOME" RUN_STORE_LIB="$RUN_STORE_LIB" bash -c '
+    log() { true; }
+    command() { if [[ "${1:-}" == "-v" && "${2:-}" == "jq" ]]; then return 1; fi; builtin command "$@"; }
+    source "$RUN_STORE_LIB"
+    record_experiment 1 0.5 ok "a \"b\" \\ c"
+    record_run "wf\"x" "p" "ok" 1 2 "{}"
+    cat "$HOME"/.kannaktopus/runs/experiments/*.jsonl
+    cat "$HOME"/.kannaktopus/runs/run-log.jsonl
+' 2>/dev/null) || NOJQ_OUT=""
+rm -rf "$NOJQ_HOME"
+
+if [[ -n "$NOJQ_OUT" ]] && echo "$NOJQ_OUT" | python3 -c 'import sys,json
+lines=[l for l in sys.stdin if l.strip()]
+assert len(lines)==2
+for l in lines: json.loads(l)
+d=json.loads(lines[0])["description"]
+assert d=="a \"b\" \\ c", d' 2>/dev/null; then
+    pass "No-jq fallback: record_experiment/record_run write valid JSONL"
+else
+    fail "No-jq fallback: record_experiment/record_run write valid JSONL" "got: $NOJQ_OUT"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""

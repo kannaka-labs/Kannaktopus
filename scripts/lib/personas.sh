@@ -162,15 +162,20 @@ apply_persona_pack() {
     # Register in active packs
     mkdir -p "$(dirname "$active_packs_file")" 2>/dev/null || true
 
-    if command -v jq &>/dev/null && [[ -f "$active_packs_file" ]]; then
+    if command -v jq &>/dev/null; then
+        [[ -f "$active_packs_file" ]] || echo '{}' > "$active_packs_file"
         local tmp="${active_packs_file}.tmp.$$"
         jq --arg name "$pack_name" --arg dir "$pack_dir" --arg count "$persona_count" \
             '.[$name] = {dir: $dir, persona_count: ($count|tonumber), loaded_at: now|todate}' \
             "$active_packs_file" > "$tmp" 2>/dev/null && mv "$tmp" "$active_packs_file"
     else
         # Simple JSON creation
+        type json_escape &>/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/utils.sh" 2>/dev/null || true
+        local esc_name esc_dir
+        esc_name=$(json_escape "$pack_name")
+        esc_dir=$(json_escape "$pack_dir")
         printf '{\n  "%s": {"dir": "%s", "persona_count": %s}\n}\n' \
-            "$pack_name" "$pack_dir" "$persona_count" > "$active_packs_file"
+            "$esc_name" "$esc_dir" "${persona_count:-0}" > "$active_packs_file"
     fi
 
     log "INFO" "Persona pack loaded: $pack_name ($persona_count personas) from $pack_dir" 2>/dev/null || true
