@@ -19,7 +19,7 @@ start_heartbeat_monitor() {
             sleep 30
         done
         rm -f "$heartbeat_file"
-    ) &
+    ) </dev/null >/dev/null 2>&1 &
     disown
 
     log DEBUG "Heartbeat monitor started for PID $pid (task: $task_id)"
@@ -63,7 +63,12 @@ compute_dynamic_timeout() {
 
     # Env override takes precedence
     if [[ -n "${OCTOPUS_AGENT_TIMEOUT:-}" ]]; then
-        echo "$OCTOPUS_AGENT_TIMEOUT"
+        local env_timeout="$OCTOPUS_AGENT_TIMEOUT"
+        if ! [[ $env_timeout =~ ^[0-9]+$ ]]; then
+            log WARN "invalid timeout '$env_timeout', using 120"
+            env_timeout=120
+        fi
+        echo "$env_timeout"
         return
     fi
 
@@ -127,18 +132,28 @@ cleanup_heartbeat() {
 }
 
 # Start a watchdog that sends TERM to $1 (a pid, or -pgid for a process
-# group) after $2 seconds; its pid is left in REPLY. It runs off the caller's
+# group) after $2 seconds, then KILL 10s later if it is still there (a target
+# that traps TERM must not hang the caller). When it fires it writes into the
+# (already created) marker file $3, so callers can tell a real timeout from a command that
+# merely died of SIGTERM. Its pid is left in REPLY. It runs off the caller's
 # pipes: a sleep still holding the pipeline's stdout kept
 # `run_with_timeout … | tee` open for the full timeout after the command had
 # finished (#127). Killing the watchdog also kills its sleep.
 _run_with_timeout_watchdog() {
-    local target="$1" secs="$2"
+    local target="$1" secs="$2" marker="${3:-}"
     (
         sleep_pid=""
         trap '[[ -n "$sleep_pid" ]] && kill "$sleep_pid" 2>/dev/null; exit 0' TERM
         sleep "$secs" &
         sleep_pid=$!
-        wait "$sleep_pid" && kill -TERM -- "$target" 2>/dev/null
+        if wait "$sleep_pid"; then
+            [[ -n "$marker" ]] && echo 1 > "$marker"
+            kill -TERM -- "$target" 2>/dev/null
+            sleep 10 &
+            sleep_pid=$!
+            wait "$sleep_pid" && kill -KILL -- "$target" 2>/dev/null
+        fi
+        exit 0
     ) </dev/null >/dev/null 2>&1 &
     REPLY=$!
 }
@@ -149,7 +164,12 @@ run_with_timeout() {
     local timeout_secs="$1"
     shift
 
-    local exit_code
+    if ! [[ $timeout_secs =~ ^[0-9]+$ ]]; then
+        log WARN "invalid timeout '$timeout_secs', using 120"
+        timeout_secs=120
+    fi
+
+    local exit_code timed_out=false marker="" t0=$SECONDS
 
     # A shell function (openrouter_execute, openrouter_execute_model,
     # perplexity_execute) cannot be exec'd by an external timeout binary:
@@ -169,7 +189,8 @@ run_with_timeout() {
         "$@" <&0 &
         fn_pid=$!
         [[ "$had_job_control" == true ]] || set +m
-        _run_with_timeout_watchdog "-$fn_pid" "$timeout_secs"
+        marker=$(mktemp "${TMPDIR:-/tmp}/octo-timeout.XXXXXX" 2>/dev/null) || marker=""
+        _run_with_timeout_watchdog "-$fn_pid" "$timeout_secs" "$marker"
         fn_monitor_pid=$REPLY
         if wait "$fn_pid" 2>/dev/null; then
             exit_code=0
@@ -180,10 +201,10 @@ run_with_timeout() {
         wait "$fn_monitor_pid" 2>/dev/null
     # Use gtimeout (GNU) or timeout if available
     elif command -v gtimeout &>/dev/null; then
-        gtimeout "$timeout_secs" "$@"
+        gtimeout -k 10 "$timeout_secs" "$@"
         exit_code=$?
     elif command -v timeout &>/dev/null; then
-        timeout "$timeout_secs" "$@"
+        timeout -k 10 "$timeout_secs" "$@"
         exit_code=$?
     else
         # Fallback with proper cleanup
@@ -192,7 +213,8 @@ run_with_timeout() {
         "$@" &
         cmd_pid=$!
 
-        _run_with_timeout_watchdog "$cmd_pid" "$timeout_secs"
+        marker=$(mktemp "${TMPDIR:-/tmp}/octo-timeout.XXXXXX" 2>/dev/null) || marker=""
+        _run_with_timeout_watchdog "$cmd_pid" "$timeout_secs" "$marker"
         monitor_pid=$REPLY
 
         if wait "$cmd_pid" 2>/dev/null; then
@@ -207,7 +229,16 @@ run_with_timeout() {
     fi
 
     # Enhanced timeout error messaging (v7.16.0 Feature 3)
-    if [[ $exit_code -eq 124 ]] || [[ $exit_code -eq 143 ]]; then
+    if [[ -n "$marker" ]]; then
+        # Watchdog paths: the watchdog wrote the marker when it fired
+        [[ -s "$marker" ]] && timed_out=true
+        rm -f "$marker"
+    elif [[ $exit_code -eq 124 || $exit_code -eq 137 ]] && (( SECONDS - t0 >= timeout_secs )); then
+        # timeout binary: 124/137 only counts when the time really ran out, not
+        # when the command exited 124 itself or was SIGKILLed early (OOM)
+        timed_out=true
+    fi
+    if [[ "$timed_out" == true ]]; then
         local timeout_mins=$((timeout_secs / 60))
         local recommended_timeout=$((timeout_secs * 2))
         local recommended_mins=$((recommended_timeout / 60))
