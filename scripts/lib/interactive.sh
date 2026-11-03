@@ -159,10 +159,18 @@ preflight_with_recovery() {
 CI_MODE="${CI:-false}"
 AUDIT_LOG="${WORKSPACE_DIR:-$HOME/.kannaktopus}/audit.log"
 
+# True for 1/true/yes (case-insensitive); CI=false / CI=0 / empty are not CI.
+# Uses tr rather than ${var,,} to stay compatible with bash 3.2 (macOS).
+_truthy() {
+    local v
+    v=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+    [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" ]]
+}
+
 # Initialize CI mode from environment
 init_ci_mode() {
     # Detect CI environment
-    if [[ -n "${CI:-}" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]]; then
+    if _truthy "${CI:-}" || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]]; then
         CI_MODE=true
         AUTONOMY_MODE="autonomous"  # No prompts in CI
         log INFO "CI environment detected - running in autonomous mode"
