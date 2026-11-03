@@ -61,6 +61,7 @@ clear_model_cache() {
     done
     # Clear persistent file cache
     rm -f /tmp/octo-model-cache-*.json 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-$HOME/.kannaktopus/cache}"/octo-model-cache-*.json 2>/dev/null || true
 }
 
 # Test 1: Hard-coded defaults

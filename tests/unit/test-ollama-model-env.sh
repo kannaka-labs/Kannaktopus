@@ -12,12 +12,13 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP"                                 # no user providers.json
 export CLAUDE_CODE_SESSION="ollama-model-env-$$"   # private resolver cache
+unset XDG_RUNTIME_DIR                              # cache goes under the temp HOME
 log() { :; }
 source "$PROJECT_ROOT/scripts/lib/provider-routing.sh"
 source "$PROJECT_ROOT/scripts/lib/model-resolver.sh"
 source "$PROJECT_ROOT/scripts/lib/dispatch.sh"
 
-clear_cache() { rm -f /tmp/octo-model-cache-*-"$CLAUDE_CODE_SESSION".json; unset "${!_OCTO_MODEL_CACHE_@}"; }
+clear_cache() { rm -f "$HOME"/.kannaktopus/cache/octo-model-cache-*-"$CLAUDE_CODE_SESSION".json; unset "${!_OCTO_MODEL_CACHE_@}"; }
 
 test_case "OCTOPUS_OLLAMA_MODEL selects the ollama model"
 clear_cache
