@@ -77,10 +77,26 @@ record_failure() {
     mkdir -p "$RESILIENCE_STATE_DIR"
 
     local count_file="$RESILIENCE_STATE_DIR/${provider}.failures"
-    local count=0
+    local lock_dir="${count_file}.lock"
+    local count=0 lock_ts tmp="$count_file.tmp.${BASHPID:-$$}"
+    # Serialize concurrent writers with an mkdir lock (atomic). The holder
+    # stamps the lock; only a lock older than 10s (a killed holder) is broken.
+    until mkdir "$lock_dir" 2>/dev/null; do
+        lock_ts=$(cat "$lock_dir/ts" 2>/dev/null) || lock_ts=""
+        if [[ "$lock_ts" =~ ^[0-9]+$ ]] && (( $(date +%s) - lock_ts > 10 )); then
+            rm -rf "$lock_dir" 2>/dev/null || true
+        fi
+        sleep 0.01
+    done
+    date +%s > "$lock_dir/ts" 2>/dev/null || true
     [[ -f "$count_file" ]] && count=$(<"$count_file")
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
     count=$((count + 1))
-    echo "$count" > "$count_file"
+    if ! { echo "$count" > "$tmp" && mv "$tmp" "$count_file"; }; then
+        rm -f "$tmp"; rm -rf "$lock_dir"
+        return 1
+    fi
+    rm -rf "$lock_dir" 2>/dev/null || true
 
     # Open circuit after 3 transient failures or 1 permanent
     local threshold=3
@@ -119,6 +135,11 @@ check_circuit_recovery() {
                 echo "half-open"
                 return 0
             fi
+        else
+            # Open with no opened_at (interrupted write): recover to half-open
+            echo "half-open" > "$RESILIENCE_STATE_DIR/${provider}.state"
+            echo "half-open"
+            return 0
         fi
     fi
     echo "$state"
@@ -134,6 +155,9 @@ backoff_delay() {
     local attempt="$1"
     local base="${2:-1}"   # base delay in seconds
     local max="${3:-30}"   # maximum delay in seconds
+
+    (( attempt < 1 )) && attempt=1
+    (( attempt > 20 )) && attempt=20
 
     local delay=$((base * (2 ** (attempt - 1))))
     [[ $delay -gt $max ]] && delay=$max
