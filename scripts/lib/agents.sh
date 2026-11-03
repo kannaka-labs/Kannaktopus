@@ -436,9 +436,13 @@ get_phase_agents() {
 
 # Select best curated agent for task
 # Uses phase context and expertise matching
+# Usage: select_curated_agent <prompt> [phase] [match_only]
+# With match_only=true and no phase, prints nothing when no expertise matches
+# instead of the backend-architect default (#192).
 select_curated_agent() {
     local prompt="$1"
     local phase="${2:-}"
+    local match_only="${3:-false}"
     local prompt_lower
     prompt_lower=$(echo "$prompt" | tr '[:upper:]' '[:lower:]')
 
@@ -462,6 +466,8 @@ select_curated_agent() {
             fi
         done
     done
+
+    [[ "$match_only" == "true" && -z "$phase" ]] && return 0
 
     # Return first candidate as default
     echo "$candidates" | awk '{print $1}'

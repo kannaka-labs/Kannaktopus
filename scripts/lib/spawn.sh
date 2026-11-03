@@ -2,6 +2,22 @@
 # spawn_agent — extracted from orchestrate.sh (v9.7.x)
 # Agent spawning and lifecycle management
 
+# Curated agent whose `readonly: true` frontmatter may restrict this spawn (#192).
+# A role passed by the caller decides the tool policy on its own, and with no
+# phase only a real expertise match counts: the backend-architect default is a
+# fallback, not a choice, and must not turn a write task read-only.
+# Usage: _spawn_readonly_agent <prompt> <phase> <role_from_caller>
+_spawn_readonly_agent() {
+    local prompt="$1" phase="$2" role_from_caller="$3" agent=""
+    [[ "$SUPPORTS_AGENT_TYPE_ROUTING" == "true" ]] || return 0
+    [[ "$role_from_caller" == "true" ]] && return 0
+    agent=$(select_curated_agent "$prompt" "$phase" true) || true
+    if [[ -n "$agent" && "${OCTOPUS_TOOL_POLICIES}" == "true" && "$(get_agent_readonly "$agent")" == "true" ]]; then
+        log WARN "Curated agent '$agent' is readonly: this spawn may not write (pass a role to override)"
+    fi
+    echo "$agent"
+}
+
 spawn_agent() {
     local _ts; _ts=$(date +%s)
     local agent_type="$1"
@@ -40,6 +56,8 @@ spawn_agent() {
     fi
 
     # Determine role if not provided
+    local role_from_caller="false"
+    [[ -n "$role" ]] && role_from_caller="true"
     if [[ -z "$role" ]]; then
         local task_type
         task_type=$(classify_task "$prompt")
@@ -81,6 +99,8 @@ spawn_agent() {
     if [[ "$SUPPORTS_AGENT_TYPE_ROUTING" == "true" ]]; then
         curated_name_early=$(select_curated_agent "$prompt" "$phase") || true
     fi
+    local readonly_agent
+    readonly_agent=$(_spawn_readonly_agent "$prompt" "$phase" "$role_from_caller")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Cache-aligned prompt structure: stable prefix first, variable suffix last
@@ -104,7 +124,7 @@ spawn_agent() {
 
     # Apply persona to prompt (v8.53.0: pass curated_name for readonly frontmatter check)
     local enhanced_prompt
-    enhanced_prompt=$(apply_persona "$role" "$prompt" "false" "${curated_name_early:-}")
+    enhanced_prompt=$(apply_persona "$role" "$prompt" "false" "$readonly_agent")
 
     # v8.21.0: Check for persona pack override
     if type get_persona_override &>/dev/null 2>&1 && [[ "${OCTOPUS_PERSONA_PACKS:-auto}" != "off" ]]; then

@@ -572,7 +572,8 @@ ${YELLOW}═══════════════════════�
 ${CYAN}═══════════════════════════════════════════════════════════════════════════${NC}
 ${CYAN}ADVANCED ORCHESTRATION${NC}
 ${CYAN}═══════════════════════════════════════════════════════════════════════════${NC}
-  spawn <agent> <prompt>  Run single agent directly
+  spawn <agent> <prompt> [task_id] [role] [phase]
+                          Run single agent directly
   fan-out <prompt>        Same prompt to all agents, collect results
   map-reduce <prompt>     Decompose → parallel execute → synthesize
   ralph <prompt>          Iterate until completion (ralph-wiggum pattern)

@@ -874,7 +874,7 @@ list_available_skills() {
     echo ""
 
     echo -e "${YELLOW}Usage:${NC}"
-    echo "  ./scripts/orchestrate.sh spawn <agent> \"prompt\""
+    echo "  ./scripts/orchestrate.sh spawn <agent> \"prompt\" [task_id] [role] [phase]"
     echo "  ./scripts/orchestrate.sh auto \"prompt\"  # Smart routing"
     echo ""
 }
@@ -3537,8 +3537,8 @@ case "$COMMAND" in
         }
         ;;
     spawn)
-        [[ $# -lt 2 ]] && { log ERROR "Usage: spawn <agent> <prompt>"; exit 1; }
-        spawn_agent "$1" "$2"
+        [[ $# -lt 2 ]] && { log ERROR "Usage: spawn <agent> <prompt> [task_id] [role] [phase]"; exit 1; }
+        spawn_agent "${@:1:5}"
         ;;
     auto)
         [[ $# -lt 1 ]] && { log ERROR "Usage: auto <prompt>"; exit 1; }
