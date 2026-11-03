@@ -1,0 +1,97 @@
+{
+  "_comment": "Kannaktopus arms hub (OCTOPUS_ARMS_HUB, scripts/lib/arms-hub.sh): every arm reaches QuantumOS (qos-mcp), Kannaka (the kannaka MCP plugin) and the kannaka-tui views (tui.*: the kannaka commands behind the TUI's Status, Memory, Cosmos and Bus tabs) through one QuantumOS hub. Fix the paths. LITE: only the core tools are listed, for small-context arms (OCTOPUS_ARMS_HUB_LITE; kannaka-brain has 4096 tokens). Unattended arms: unlisted tools are denied (and not shown); ask calls are stored and answered approval_required. qos-mcp needs qemu; to run it on another host use \"command\": \"ssh\" with args [\"host\", \"cd ~/QuantumOS && exec qos-mcp\"].",
+  "servers": {
+    "qos": {
+      "command": "qos-mcp",
+      "args": [],
+      "env": {
+        "QOS_KERNEL": "~/QuantumOS/build/x86_64/kernel.elf32"
+      },
+      "call_timeout_s": 300
+    },
+    "kannaka": {
+      "command": "node",
+      "args": [
+        "~/.claude/plugins/marketplaces/kannaka/plugins/kannaka/mcp/kannaka-mcp.mjs"
+      ],
+      "env": {
+        "KANNAKA_BIN": "~/.local/bin/kannaka"
+      }
+    },
+    "tui": {
+      "cli": {
+        "binary": "~/.local/bin/kannaka",
+        "env": {
+          "KANNAKA_QUIET": "1"
+        },
+        "timeout_s": 90,
+        "tools": {
+          "status": {
+            "description": "kannaka-tui Status tab: HRM gauges (phi, xi, order, consciousness level, memory counts) as the TUI reads them (`kannaka status --envelope`).",
+            "argv": [
+              "status",
+              "--envelope"
+            ]
+          },
+          "observe": {
+            "description": "kannaka-tui Memory tab: the medium's introspection snapshot (`kannaka observe --json`).",
+            "argv": [
+              "observe",
+              "--json"
+            ]
+          },
+          "constellation": {
+            "description": "kannaka-tui Cosmos tab: which constellation apps are up or down (`kannaka constellation`).",
+            "argv": [
+              "constellation"
+            ]
+          },
+          "radio": {
+            "description": "kannaka-tui Cosmos tab: what Kannaka Radio is playing now (`kannaka radio`).",
+            "argv": [
+              "radio"
+            ]
+          },
+          "swarm": {
+            "description": "kannaka-tui Bus and Constellation tabs, as a snapshot: the swarm's members and phases (`kannaka swarm status`).",
+            "argv": [
+              "swarm",
+              "status"
+            ]
+          },
+          "dream": {
+            "description": "kannaka-tui Dreams tab trigger: run a dream consolidation (`kannaka dream --mode lite|deep`). Changes the memory store.",
+            "argv": [
+              "dream",
+              "--mode",
+              "{mode}"
+            ],
+            "params": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "lite",
+                  "deep"
+                ],
+                "default": "lite"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "policy": {
+    "kannaka.kannaka_status": "allow",
+    "kannaka.kannaka_recall": "allow",
+    "qos.qos_boot": "allow",
+    "qos.qos_status": "allow",
+    "qos.qos_sysinfo": "allow",
+    "qos.qos_recall": "allow",
+    "qos.qos_imprint": "allow",
+    "qos.qos_shutdown": "allow",
+    "tui.status": "allow",
+    "tui.radio": "allow"
+  },
+  "default": "deny"
+}

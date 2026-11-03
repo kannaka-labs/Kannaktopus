@@ -20,6 +20,9 @@
 #   OCTOPUS_ARMS_HUB_MAX_TURNS  tool-loop turn cap for the completion arms; default 20
 #   OCTOPUS_PYTHON              interpreter for qos_agent.py; default python3, else python
 #
+# Example configs: config/arms-hub.example.json (QuantumOS, Kannaka and the
+# kannaka-tui views as `tui.*`) and config/arms-hub-lite.example.json.
+#
 # Paths must not contain spaces: arm commands are split on whitespace (spawn.sh).
 # The hub config decides what an arm may do. For unattended arms set
 # "default": "deny"; an `ask` call is stored and answered approval_required.
