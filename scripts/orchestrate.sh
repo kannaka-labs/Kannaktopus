@@ -443,7 +443,7 @@ PLANS_DIR="${WORKSPACE_DIR}/plans"
 
 # CI/CD Mode Detection (Claude Code v2.1.10: CLAUDE_CODE_DISABLE_BACKGROUND_TASKS)
 CI_MODE="${CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:-false}"
-if [[ -n "${CI:-}" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]] || [[ -n "${JENKINS_URL:-}" ]]; then
+if _truthy "${CI:-}" || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]] || [[ -n "${JENKINS_URL:-}" ]]; then
     CI_MODE="true"
 fi
 
