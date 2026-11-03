@@ -8,7 +8,7 @@ _OCTOPUS_SIMILARITY_LOADED=true
 # Extract markdown headings from a file (lowercased, sorted, deduped)
 extract_headings() {
     local file="$1"
-    grep '^#' "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort -u || true
+    grep '^#' "$file" 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]' | LC_ALL=C sort -u || true
 }
 
 # Jaccard similarity using loops (bash 3.2 compatible - no comm/paste)
@@ -23,6 +23,8 @@ jaccard_similarity() {
     local union_count=0
 
     # Read sets into arrays
+    set_a=$(printf '%s\n' "$set_a" | LC_ALL=C sort -u)
+    set_b=$(printf '%s\n' "$set_b" | LC_ALL=C sort -u)
     while IFS= read -r line; do arr_a+=("$line"); done <<< "$set_a"
     while IFS= read -r line; do arr_b+=("$line"); done <<< "$set_b"
 
@@ -45,13 +47,12 @@ jaccard_similarity() {
 
 # Check if parallel agent results are converging
 # Uses heading extraction + jaccard similarity
+# Args: the result files (callers pass an expanded glob)
 check_convergence() {
-    local result_pattern="$1"
-
     [[ "${OCTOPUS_CONVERGENCE_ENABLED:-false}" != "true" ]] && return 1
 
     local files=()
-    for f in $result_pattern; do
+    for f in "$@"; do
         [[ -f "$f" ]] && files+=("$f")
     done
 
