@@ -42,6 +42,12 @@ check_codex_auth() {
 }
 
 # Handle auth commands
+# Masked preview of an API key: head...tail only when the key is long enough that
+# the two slices cannot cover it; otherwise just a 3-character prefix (#168).
+_auth_key_preview() {
+    if (( ${#1} > 16 )); then echo "${1:0:8}...${1: -4}"; else echo "${1:0:3}****"; fi
+}
+
 handle_auth_command() {
     local action="${1:-status}"
     shift || true
@@ -122,7 +128,7 @@ handle_auth_command() {
             case "$auth_status" in
                 api_key)
                     echo -e "  OpenAI:  ${GREEN}✓ Authenticated (API Key)${NC}"
-                    local key_preview="${OPENAI_API_KEY:0:8}...${OPENAI_API_KEY: -4}"
+                    local key_preview; key_preview=$(_auth_key_preview "$OPENAI_API_KEY")
                     echo -e "  Key:     $key_preview"
                     ;;
                 oauth)
@@ -151,7 +157,7 @@ handle_auth_command() {
                 auth_type=$(grep -o '"selectedType"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.gemini/settings.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "oauth")
                 echo -e "  Type:    $auth_type"
             elif [[ -n "$GEMINI_API_KEY" ]]; then
-                local gemini_preview="${GEMINI_API_KEY:0:8}...${GEMINI_API_KEY: -4}"
+                local gemini_preview; gemini_preview=$(_auth_key_preview "$GEMINI_API_KEY")
                 echo -e "  Gemini:  ${GREEN}✓ Authenticated (API Key)${NC}"
                 echo -e "  Key:     $gemini_preview"
             else
