@@ -37,6 +37,17 @@ get_agent_command() {
 
     local sandbox_flag="--sandbox ${codex_sandbox}"
 
+    # Arms hub (lib/arms-hub.sh): QuantumOS + Kannaka MCP tools for every arm
+    # when OCTOPUS_ARMS_HUB is set. Each helper prints nothing when it is off.
+    local claude_hub="" gemini_hub=""
+    if type arms_hub_enabled &>/dev/null && arms_hub_enabled; then
+        case "$agent_type" in
+            codex*)  sandbox_flag+=" $(arms_hub_codex_flags)" ;;
+            claude*) claude_hub=" $(arms_hub_claude_flags)" ;;
+            gemini*) gemini_hub=" $(arms_hub_gemini_env)" ;;
+        esac
+    fi
+
     case "$agent_type" in
         codex|codex-standard|codex-max|codex-mini|codex-general)
             model=$(get_agent_model "$agent_type" "$phase" "$role")
@@ -68,6 +79,7 @@ get_agent_command() {
             if [[ "$OCTOPUS_PLATFORM" == "Darwin" && -z "${GEMINI_API_KEY:-}" ]]; then
                 gemini_env="env NODE_NO_WARNINGS=1 GEMINI_FORCE_FILE_STORAGE=true"
             fi
+            gemini_env+="${gemini_hub% }"
             case "${OCTOPUS_GEMINI_SANDBOX:-headless}" in
                 headless|auto-accept)
                     echo "${gemini_env} gemini -o text --approval-mode yolo -m ${model}" ;;
@@ -83,14 +95,14 @@ get_agent_command() {
         # Without it a `claude --print` subprocess is denied every file write and
         # shell command the repo's own settings do not already allow, so ralph
         # loops and spawns in such repos iterate without changing anything.
-        claude) echo "claude${_BARE_OPT} --print ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;;                         # Claude Sonnet 4.6
-        claude-sonnet) echo "claude${_BARE_OPT} --print --model sonnet ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;;        # Claude Sonnet explicit
-        claude-opus) echo "claude${_BARE_OPT} --print --model opus ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;;            # Claude Opus 4.6 (v8.0)
+        claude) echo "claude${_BARE_OPT} --print ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}${claude_hub% }" ;;                         # Claude Sonnet 4.6
+        claude-sonnet) echo "claude${_BARE_OPT} --print --model sonnet ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}${claude_hub% }" ;;        # Claude Sonnet explicit
+        claude-opus) echo "claude${_BARE_OPT} --print --model opus ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}${claude_hub% }" ;;            # Claude Opus 4.6 (v8.0)
         # Fast mode is a session toggle (/fast) in current Claude Code, not a CLI flag:
         # `claude --print --fast` fails with "unknown option '--fast'" and spawn.sh
         # upgrades every claude-opus to claude-opus-fast when SUPPORTS_FAST_OPUS is
         # true, so with the flag every Opus arm died in 30 s. Same command as claude-opus.
-        claude-opus-fast) echo "claude${_BARE_OPT} --print --model opus ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}" ;; # Claude Opus 4.6 (fast mode is a session toggle)
+        claude-opus-fast) echo "claude${_BARE_OPT} --print --model opus ${OCTOPUS_CLAUDE_EXTRA_ARGS:-}${claude_hub% }" ;; # Claude Opus 4.6 (fast mode is a session toggle)
         openrouter) echo "openrouter_execute" ;;                 # OpenRouter API (v4.8)
         openrouter-glm5) echo "openrouter_execute_model z-ai/glm-5" ;;           # v8.11.0: GLM-5 via OpenRouter
         openrouter-kimi) echo "openrouter_execute_model moonshotai/kimi-k2.5" ;; # v8.11.0: Kimi K2.5 via OpenRouter
@@ -106,7 +118,11 @@ get_agent_command() {
             model=$(get_agent_model "$agent_type" "$phase" "$role")
             # --nowordwrap: without it ollama wraps long lines with cursor escapes
             # (ESC[1D ESC[K) that land in the result file even when stdout is a pipe
-            echo "ollama run --nowordwrap $model"
+            if type arms_hub_tool_loop_ready &>/dev/null && arms_hub_tool_loop_ready; then
+                echo "arms_hub_ollama_execute $model"   # tools via the arms hub (lib/arms-hub.sh)
+            else
+                echo "ollama run --nowordwrap $model"
+            fi
             ;;
         qwen|qwen-research)  # v9.10.0: Qwen CLI — fork of Gemini CLI (free tier)
             echo "env NODE_NO_WARNINGS=1 qwen -o text --approval-mode yolo"

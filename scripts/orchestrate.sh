@@ -164,6 +164,7 @@ _kt_pulse_standalone() {
 # Provider detection & version checking (v9.7.7 extraction)
 source "${SCRIPT_DIR}/lib/providers.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/preflight.sh" 2>/dev/null || true
+source "${SCRIPT_DIR}/lib/arms-hub.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/dispatch.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/debate.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/progressive.sh" 2>/dev/null || true
