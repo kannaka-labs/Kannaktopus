@@ -344,6 +344,53 @@ test_personas_sourced_by_orchestrate() {
 # Run all tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
+test_apply_pack_special_chars_valid_json() {
+    test_case "apply_persona_pack writes valid JSON for quoted pack name (#175)"
+
+    mkdir -p "$WORKSPACE_DIR/.octo"
+    rm -f "$WORKSPACE_DIR/.octo/active-packs.json"
+
+    local pack_dir="$TEST_TMP_DIR/quote-test"
+    mkdir -p "$pack_dir"
+    cat > "$pack_dir/pack.yaml" << 'EOF'
+name: a "b" c
+version: 1.0.0
+author: test
+description: Quote test
+personas:
+  - file: a.md
+    mode: extends
+    target: debugger
+EOF
+
+    apply_persona_pack "$pack_dir" >/dev/null 2>&1 || true
+
+    if jq empty "$WORKSPACE_DIR/.octo/active-packs.json" 2>/dev/null; then
+        test_pass
+    else
+        test_fail "active-packs.json is not valid JSON"
+    fi
+}
+
+test_apply_pack_special_chars_no_jq() {
+    test_case "apply_persona_pack no-jq fallback escapes quoted name (#175)"
+
+    rm -f "$WORKSPACE_DIR/.octo/active-packs.json"
+    local pack_dir="$TEST_TMP_DIR/quote-test"
+
+    # Simulate jq missing
+    (
+        command() { if [[ "${1:-}" == "-v" && "${2:-}" == "jq" ]]; then return 1; fi; builtin command "$@"; }
+        apply_persona_pack "$pack_dir" >/dev/null 2>&1 || true
+    )
+
+    if jq empty "$WORKSPACE_DIR/.octo/active-packs.json" 2>/dev/null; then
+        test_pass
+    else
+        test_fail "no-jq fallback wrote invalid JSON"
+    fi
+}
+
 # Discovery
 test_discover_empty
 test_discover_finds_pack_yaml
@@ -360,6 +407,8 @@ test_get_personas_replaces
 # Active packs
 test_apply_pack_creates_registry
 test_list_active_packs
+test_apply_pack_special_chars_valid_json
+test_apply_pack_special_chars_no_jq
 
 # Auto-loading
 test_auto_load_disabled

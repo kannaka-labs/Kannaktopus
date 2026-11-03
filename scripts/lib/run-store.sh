@@ -11,6 +11,17 @@ _RUN_STORE_DIR="${HOME}/.kannaktopus/runs"
 _RUN_STORE_FILE="${_RUN_STORE_DIR}/run-log.jsonl"
 _RUN_STORE_MAX_ENTRIES=1000
 
+# Escape a string for embedding in JSON (no-jq fallback)
+_run_store_esc() {
+    local v="$1"
+    v="${v//\\/\\\\}"
+    v="${v//\"/\\\"}"
+    v="${v//$'\t'/\\t}"
+    v="${v//$'\n'/\\n}"
+    v="${v//$'\r'/\\r}"
+    printf '%s' "$v"
+}
+
 # Record a workflow run completion
 # Args: workflow providers status [findings_count] [duration_ms] [metadata_json]
 # Example: record_run "discover" "codex,gemini,claude" "success" "12" "45000" '{"topic":"auth"}'
@@ -44,7 +55,7 @@ record_run() {
             '{date:$d, workflow:$w, providers:$p, timestamp:$ts, findings_count:($fc|tonumber), status:$s, duration_ms:($dm|tonumber), metadata:$m}' 2>/dev/null)
     else
         # Fallback without jq
-        entry="{\"date\":\"$date_stamp\",\"workflow\":\"$workflow\",\"providers\":\"$providers\",\"timestamp\":\"$timestamp\",\"findings_count\":$findings_count,\"status\":\"$run_status\",\"duration_ms\":$duration_ms,\"metadata\":$metadata}"
+        entry="{\"date\":\"$date_stamp\",\"workflow\":\"$(_run_store_esc "$workflow")\",\"providers\":\"$(_run_store_esc "$providers")\",\"timestamp\":\"$timestamp\",\"findings_count\":$findings_count,\"status\":\"$(_run_store_esc "$run_status")\",\"duration_ms\":$duration_ms,\"metadata\":$metadata}"
     fi
 
     [[ -z "$entry" ]] && return 1
@@ -99,7 +110,7 @@ record_experiment() {
             --arg c "$commit_hash" \
             '{iteration:($i|tonumber), timestamp:$ts, metric:($m|tonumber), status:$s, description:$d, commit:$c}' 2>/dev/null)
     else
-        entry="{\"iteration\":$iteration,\"timestamp\":\"$timestamp\",\"metric\":$metric_value,\"status\":\"$exp_status\",\"description\":\"$description\",\"commit\":\"$commit_hash\"}"
+        entry="{\"iteration\":$iteration,\"timestamp\":\"$timestamp\",\"metric\":$metric_value,\"status\":\"$(_run_store_esc "$exp_status")\",\"description\":\"$(_run_store_esc "$description")\",\"commit\":\"$(_run_store_esc "$commit_hash")\"}"
     fi
 
     echo "$entry" >> "$experiment_file"
