@@ -3,6 +3,12 @@
 # Extracted from orchestrate.sh — v9.7.5
 # Hardened in v9.7.8: timeout, HTTP status handling, 429 retry, dedup
 
+# _unescape_json_text: decode \n \t \" in raw JSON string text. Only for the
+# regex fallback, where no real JSON parser has decoded the value already.
+_unescape_json_text() {
+    printf '%s' "$1" | sed 's/\\n/\n/g; s/\\t/\t/g; s/\\"/"/g'
+}
+
 # _chat_completion_content <json>
 # Sets REPLY to .choices[0].message.content of an OpenAI-compatible chat
 # completion. `json_extract "$response" content` looked for a TOP-LEVEL
@@ -27,7 +33,8 @@ except Exception:
 ' <<< "$json" 2>/dev/null) && return 0
         return 1
     fi
-    json_extract "$json" "content"
+    json_extract "$json" "content" || return 1
+    REPLY=$(_unescape_json_text "$REPLY")
 }
 
 # _responses_output_text <json>
@@ -59,7 +66,7 @@ except Exception:
         return 1
     fi
     local pattern='"text"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
-    [[ "$json" =~ $pattern ]] && { REPLY="${BASH_REMATCH[1]}"; return 0; }
+    [[ "$json" =~ $pattern ]] && { REPLY=$(_unescape_json_text "${BASH_REMATCH[1]}"); return 0; }
     return 1
 }
 
@@ -194,10 +201,10 @@ EOF
             return 1
         fi
         log WARN "Empty response from OpenRouter ($model)"
-        echo "$response"
+        return 1
     else
         local result
-        result=$(echo "$content" | sed 's/\\n/\n/g; s/\\t/\t/g; s/\\"/"/g')
+        result="$content"
         if [[ -n "$output_file" ]]; then
             echo "$result" > "$output_file"
         else
@@ -266,13 +273,22 @@ perplexity_execute() {
 EOF
 )
 
-    local response
-    response=$(printf '%s' "$payload" | curl -s -X POST "https://api.perplexity.ai/v1/responses" \
+    local raw_response response http_code
+    raw_response=$(printf '%s' "$payload" | curl -s -w '%{http_code}' -X POST "https://api.perplexity.ai/v1/responses" \
         --max-time 180 \
         -H "Authorization: Bearer ${PERPLEXITY_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "Connection: keep-alive" \
-        --data-binary @-)
+        --data-binary @-) || {
+        log ERROR "Perplexity curl failed (exit $?, model=$model)"
+        return 1
+    }
+    http_code="${raw_response: -3}"
+    response="${raw_response:0:${#raw_response}-3}"
+    if [[ "${http_code:0:1}" != "2" ]]; then
+        log ERROR "Perplexity HTTP $http_code (model=$model): ${response:0:200}"
+        return 1
+    fi
 
     # Extract the message text from the Responses-format reply
     local content=""
@@ -292,10 +308,10 @@ EOF
             return 1
         fi
         log WARN "Empty response from Perplexity ($model)"
-        echo "$response"
+        return 1
     else
         local result
-        result=$(echo "$content" | sed 's/\\n/\n/g; s/\\t/\t/g; s/\\"/"/g')
+        result="$content"
 
         # Append citations if present
         if [[ -n "$citations" ]]; then
