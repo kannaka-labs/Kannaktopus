@@ -74,6 +74,53 @@ else
     pass "no curl call passes the payload as an argument"
 fi
 
+# --- #165: failure handling and no double-unescape -------------------------
+curl() { cat >/dev/null; return 7; }
+rc=0; out=$(perplexity_execute sonar "hi" 2>/dev/null) || rc=$?
+if [[ $rc -ne 0 && -z "$out" ]]; then
+    pass "perplexity_execute fails when curl fails (exit 7)"
+else
+    fail "perplexity_execute fails when curl fails (exit 7)" "rc=$rc out='${out:0:60}'"
+fi
+
+curl() { cat >/dev/null; printf '%s' '<html>Bad Gateway</html>'; printf '502'; return 0; }
+rc=0; out=$(perplexity_execute sonar "hi" 2>/dev/null) || rc=$?
+if [[ $rc -ne 0 && "$out" != *html* ]]; then
+    pass "perplexity_execute fails on a non-2xx HTML page"
+else
+    fail "perplexity_execute fails on a non-2xx HTML page" "rc=$rc out='${out:0:60}'"
+fi
+
+curl() { cat >/dev/null; printf '%s' '{}'; printf '200'; return 0; }
+rc=0; out=$(perplexity_execute sonar "hi" 2>/dev/null) || rc=$?
+[[ $rc -ne 0 ]] && pass "perplexity_execute fails on an empty 200 response" \
+    || fail "perplexity_execute fails on an empty 200 response" "rc=0 out='${out:0:60}'"
+rc=0; out=$(openrouter_execute_model m p 2>/dev/null) || rc=$?
+[[ $rc -ne 0 ]] && pass "openrouter_execute_model fails on an empty 200 response" \
+    || fail "openrouter_execute_model fails on an empty 200 response" "rc=0 out='${out:0:60}'"
+
+if command -v jq &>/dev/null || command -v python3 &>/dev/null; then
+    curl() { cat >/dev/null; printf '%s' '{"choices":[{"message":{"content":"printf \"a\\n\""}}]}'; printf '200'; return 0; }
+    out=$(openrouter_execute_model m p 2>/dev/null) || out=""
+    if [[ "$out" == 'printf "a\n"' ]]; then
+        pass "openrouter_execute_model keeps a literal backslash-n in the answer"
+    else
+        fail "openrouter_execute_model keeps a literal backslash-n in the answer" "out='$out'"
+    fi
+    curl() { cat >/dev/null; printf '%s' '{"output":[{"type":"message","content":[{"type":"output_text","text":"C:\\temp\\new"}]}]}'; printf '200'; return 0; }
+    out=$(perplexity_execute sonar "hi" 2>/dev/null) || out=""
+    if [[ "$out" == 'C:\temp\new' ]]; then
+        pass "perplexity_execute keeps a Windows path intact"
+    else
+        fail "perplexity_execute keeps a Windows path intact" "out='$out'"
+    fi
+else
+    echo "SKIP: no jq or python3 for the double-unescape tests"
+fi
+out=$(_unescape_json_text 'a\nb')
+[[ "$out" == $'a\nb' ]] && pass "regex fallback helper still decodes raw JSON escapes" \
+    || fail "regex fallback helper still decodes raw JSON escapes" "out='$out'"
+
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "api-arms-payload-stdin: $PASS_COUNT/$TEST_COUNT passed"
