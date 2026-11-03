@@ -33,11 +33,35 @@ update_task_progress() {
         return 1
     fi
 
-    # Write to control pipe for Claude Code to update spinner
-    echo "TASK_UPDATE:${task_id}:activeForm:${active_form}" >> "$CLAUDE_CODE_CONTROL_PIPE" 2>/dev/null || {
+    # Strip newlines from fields so a message stays a single line
+    local safe_id="${task_id//[$'\n\r']/ }"
+    local safe_form="${active_form//[$'\n\r']/ }"
+    local line="TASK_UPDATE:${safe_id}:activeForm:${safe_form}"
+
+    # Write to control pipe for Claude Code to update spinner.
+    # Opening a FIFO with no reader blocks forever, so bound the write
+    # (timeout, gtimeout on macOS, or a background write killed after 2s).
+    local timeout_cmd="" rc=0
+    command -v timeout >/dev/null 2>&1 && timeout_cmd=timeout
+    [[ -z "$timeout_cmd" ]] && command -v gtimeout >/dev/null 2>&1 && timeout_cmd=gtimeout
+    if [[ -n "$timeout_cmd" ]]; then
+        "$timeout_cmd" 2 bash -c 'printf "%s\n" "$1" >> "$2"' _ "$line" "$CLAUDE_CODE_CONTROL_PIPE" 2>/dev/null || rc=$?
+    else
+        ( printf '%s\n' "$line" >> "$CLAUDE_CODE_CONTROL_PIPE" ) 2>/dev/null &
+        local writer=$! i
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$writer" 2>/dev/null || break
+            sleep 0.2
+        done
+        if kill -0 "$writer" 2>/dev/null; then
+            kill "$writer" 2>/dev/null; rc=124
+        fi
+        wait "$writer" 2>/dev/null || { [[ $rc -eq 0 ]] && rc=1; }
+    fi
+    if [[ $rc -ne 0 ]]; then
         log WARN "Failed to write to control pipe"
         return 1
-    }
+    fi
 
     log DEBUG "Updated task $task_id: $active_form"
     return 0
@@ -120,20 +144,6 @@ record_error() {
     local error_file="$error_dir/error-log.md"
     mkdir -p "$error_dir"
 
-    # Cap at 100 entries: count existing, trim oldest if needed
-    if [[ -f "$error_file" ]]; then
-        local entry_count
-        entry_count=$(grep -c "^### ERROR |" "$error_file" 2>/dev/null || echo "0")
-        if [[ "$entry_count" -ge 100 ]]; then
-            # Remove first entry (everything up to second ### ERROR)
-            local second_entry_line
-            second_entry_line=$(grep -n "^### ERROR |" "$error_file" | sed -n '2p' | cut -d: -f1)
-            if [[ -n "$second_entry_line" ]]; then
-                tail -n +"$second_entry_line" "$error_file" > "${error_file}.tmp" && mv "${error_file}.tmp" "$error_file"
-            fi
-        fi
-    fi
-
     local timestamp
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -141,7 +151,51 @@ record_error() {
     local safe_error="${error_msg:0:500}"
     safe_error=$(echo "$safe_error" | tr -d '\000-\011\013-\037')
 
-    cat >> "$error_file" << ERREOF
+    # Hold a lock around count, trim and append (flock, or mkdir fallback).
+    # Hidden names so the lock never looks like a log or temp file.
+    local lock_file="$error_dir/.error-log.lock" lock_dir="$error_dir/.error-log.lockdir"
+    local use_flock="" rc=0
+    if command -v flock >/dev/null 2>&1; then
+        use_flock=1
+        exec 9>"$lock_file"
+        flock 9
+    else
+        # The holder stamps the lock; only a lock older than 10s (a killed
+        # holder) is broken, so a slow live writer keeps it
+        local lock_ts
+        while ! mkdir "$lock_dir" 2>/dev/null; do
+            lock_ts=$(cat "$lock_dir/ts" 2>/dev/null) || lock_ts=""
+            if [[ "$lock_ts" =~ ^[0-9]+$ ]] && (( $(date +%s) - lock_ts > 10 )); then
+                rm -rf "$lock_dir" 2>/dev/null || true
+            fi
+            sleep 0.05
+        done
+        date +%s > "$lock_dir/ts" 2>/dev/null || true
+    fi
+
+    # Trim and append inside a subshell-free block whose status we keep, so
+    # the lock is released on every path below
+    {
+        # Cap at 100 entries: count existing, trim oldest if needed
+        if [[ -f "$error_file" ]]; then
+            local entry_count
+            entry_count=$(grep -c "^### ERROR |" "$error_file" 2>/dev/null) || entry_count=0
+            if [[ "$entry_count" -ge 100 ]]; then
+                # Remove first entry (everything up to second ### ERROR)
+                local second_entry_line
+                second_entry_line=$(grep -n "^### ERROR |" "$error_file" | sed -n '2p' | cut -d: -f1)
+                if [[ -n "$second_entry_line" ]]; then
+                    local tmp_file
+                    tmp_file=$(mktemp "${error_file}.XXXX") &&
+                    # Copy back rather than mv, so the log keeps its own permissions
+                    tail -n +"$second_entry_line" "$error_file" > "$tmp_file" &&
+                    cat "$tmp_file" > "$error_file"
+                    rm -f "${tmp_file:-}"
+                fi
+            fi
+        fi
+
+        cat >> "$error_file" << ERREOF
 
 ### ERROR | $timestamp | agent: $agent | exit_code: $exit_code
 **Task:** ${task:0:200}
@@ -151,6 +205,15 @@ record_error() {
 **Prevention:** Pending
 ---
 ERREOF
+    } || rc=$?
 
+    if [[ -n "$use_flock" ]]; then
+        flock -u 9 2>/dev/null || true
+        exec 9>&-
+    else
+        rm -rf "$lock_dir" 2>/dev/null || true
+    fi
+
+    [[ $rc -eq 0 ]] || return "$rc"
     log DEBUG "Recorded error: agent=$agent, exit_code=$exit_code"
 }
