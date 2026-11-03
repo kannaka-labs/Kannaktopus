@@ -25,7 +25,7 @@ progressive_synthesis_monitor() {
         done
 
         # If we have minimum results and haven't started synthesis yet
-        if [[ $result_count -ge $min_results && ! $synthesis_started ]]; then
+        if [[ $result_count -ge $min_results && "$synthesis_started" != true ]]; then
             log "INFO" "Progressive synthesis: $result_count results available, starting early synthesis"
 
             # Run partial synthesis in background
@@ -37,7 +37,7 @@ progressive_synthesis_monitor() {
         fi
 
         # Update partial synthesis if more results arrived
-        if [[ $synthesis_started && $result_count -gt $last_count ]]; then
+        if [[ "$synthesis_started" == true && $result_count -gt $last_count ]]; then
             log "DEBUG" "Progressive synthesis: updating ($result_count results)"
             # Could update here, but for simplicity we'll just run once
         fi
@@ -65,11 +65,11 @@ synthesize_probe_results_partial() {
     local results=""
     local result_count=0
     for result in "$RESULTS_DIR"/*-probe-${task_group}-*.md; do
-        [[ ! -f "$result" ]] || continue
+        [[ -f "$result" ]] || continue
         local file_size
         file_size=$(wc -c < "$result" 2>/dev/null || echo "0")
         if [[ $file_size -gt 500 ]]; then
-            results+="$(<"$result")\n\n---\n\n"
+            results+="$(<"$result")"$'\n\n---\n\n'
             ((result_count++)) || true
         fi
     done
@@ -79,7 +79,7 @@ synthesize_probe_results_partial() {
     echo "Processing early results while remaining agents complete..."
     echo ""
     echo "## Available Insights"
-    echo "$results" | head -500
+    printf '%s\n' "$results" | head -500
     echo ""
     echo "_Final synthesis will be available when all agents complete_"
 }
