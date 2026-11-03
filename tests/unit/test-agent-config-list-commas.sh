@@ -40,5 +40,31 @@ got=$(select_curated_agent "run the unit-tests suite" "" true || true)
 got=$(select_curated_agent "tune the redis config" "" true || true)
 [[ -z "$got" ]] && check "match_only: no match prints nothing" ok || check "match_only no match (got $got)" bad
 
+# Issue #196: inline YAML comments are stripped; '#' without leading whitespace survives
+got=$(get_agent_config "code-reviewer" "cli" || true)
+[[ "$got" == "codex-spark" ]] && check "cli with trailing comment (code-reviewer)" ok || check "cli trailing comment (got $got)" bad
+
+FIXTURE=$(mktemp)
+printf 'agents:
+  fx:
+    cli: codex   # note: here
+    lang: c#
+    url: http://x/y#frag  # c
+    tabbed: [a, b]\t# t
+' > "$FIXTURE"
+got=$(AGENTS_CONFIG="$FIXTURE" get_agent_config "fx" "cli" || true)
+[[ "$got" == "codex" ]] && check "fixture cli comment stripped" ok || check "fixture cli (got $got)" bad
+got=$(AGENTS_CONFIG="$FIXTURE" get_agent_config "fx" "lang" || true)
+[[ "$got" == "c#" ]] && check "c# survives" ok || check "c# survives (got $got)" bad
+got=$(AGENTS_CONFIG="$FIXTURE" get_agent_config "fx" "url" || true)
+[[ "$got" == "http://x/y#frag" ]] && check "url fragment survives" ok || check "url fragment (got $got)" bad
+got=$(AGENTS_CONFIG="$FIXTURE" get_agent_config "fx" "tabbed" || true)
+[[ "$got" == "a b" ]] && check "tab-separated comment stripped" ok || check "tabbed (got $got)" bad
+rm -f "$FIXTURE"
+
+# No quoted value in the shipped config may contain ' #'
+bad=$(grep -E "^    [a-z_]+:.*([\"'])[^\"']*[[:space:]]#[^\"']*\\1" "$AGENTS_CONFIG" || true)
+[[ -z "$bad" ]] && check "no quoted value in config contains ' #'" ok || check "quoted ' #' values: $bad" bad
+
 echo "Passed: $PASSED Failed: $FAILED"
 [[ $FAILED -eq 0 ]]
