@@ -323,17 +323,21 @@ setup_wizard() {
     else
         echo -e "  ${YELLOW}✗${NC} Codex CLI not found"
         echo ""
-        read -p "  Install Codex CLI now? (requires npm) [Y/n] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            echo -e "  ${CYAN}→${NC} Installing Codex CLI..."
-            if npm install -g @openai/codex 2>&1 | sed 's/^/    /'; then
-                echo -e "  ${GREEN}✓${NC} Codex CLI installed successfully"
-            else
-                echo -e "  ${RED}✗${NC} Installation failed. Try manually: npm install -g @openai/codex"
-            fi
-        else
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
             echo -e "  ${YELLOW}⚠${NC} Skipped. Install later: npm install -g @openai/codex"
+        else
+            read -p "  Install Codex CLI now? (requires npm) [Y/n] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                echo -e "  ${CYAN}→${NC} Installing Codex CLI..."
+                if npm install -g @openai/codex 2>&1 | sed 's/^/    /'; then
+                    echo -e "  ${GREEN}✓${NC} Codex CLI installed successfully"
+                else
+                    echo -e "  ${RED}✗${NC} Installation failed. Try manually: npm install -g @openai/codex"
+                fi
+            else
+                echo -e "  ${YELLOW}⚠${NC} Skipped. Install later: npm install -g @openai/codex"
+            fi
         fi
     fi
     echo ""
@@ -351,17 +355,21 @@ setup_wizard() {
     else
         echo -e "  ${YELLOW}✗${NC} Gemini CLI not found"
         echo ""
-        read -p "  Install Gemini CLI now? (requires npm) [Y/n] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            echo -e "  ${CYAN}→${NC} Installing Gemini CLI..."
-            if npm install -g @anthropic/gemini-cli 2>&1 | sed 's/^/    /'; then
-                echo -e "  ${GREEN}✓${NC} Gemini CLI installed successfully"
-            else
-                echo -e "  ${RED}✗${NC} Installation failed. Try manually: npm install -g @anthropic/gemini-cli"
-            fi
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            echo -e "  ${YELLOW}⚠${NC} Skipped. Install later: npm install -g @google/gemini-cli"
         else
-            echo -e "  ${YELLOW}⚠${NC} Skipped. Install later: npm install -g @anthropic/gemini-cli"
+            read -p "  Install Gemini CLI now? (requires npm) [Y/n] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                echo -e "  ${CYAN}→${NC} Installing Gemini CLI..."
+                if npm install -g @google/gemini-cli 2>&1 | sed 's/^/    /'; then
+                    echo -e "  ${GREEN}✓${NC} Gemini CLI installed successfully"
+                else
+                    echo -e "  ${RED}✗${NC} Installation failed. Try manually: npm install -g @google/gemini-cli"
+                fi
+            else
+                echo -e "  ${YELLOW}⚠${NC} Skipped. Install later: npm install -g @google/gemini-cli"
+            fi
         fi
     fi
     echo ""
