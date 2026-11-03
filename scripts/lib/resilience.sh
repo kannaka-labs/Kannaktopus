@@ -79,7 +79,25 @@ record_failure() {
     local count_file="$RESILIENCE_STATE_DIR/${provider}.failures"
     local lock_dir="${count_file}.lock"
     local count=0 lock_ts tmp="$count_file.tmp.${BASHPID:-$$}"
-    # Serialize concurrent writers with an mkdir lock (atomic). The holder
+
+    # flock where available (Linux): the kernel serializes the
+    # read-increment-write and frees the lock if the holder dies
+    if command -v flock >/dev/null 2>&1; then
+        count=$(
+            exec 9>"${count_file}.flock"
+            flock 9
+            c=0
+            [[ -f "$count_file" ]] && c=$(<"$count_file")
+            [[ "$c" =~ ^[0-9]+$ ]] || c=0
+            c=$((c + 1))
+            echo "$c" > "$tmp" && mv "$tmp" "$count_file" && echo "$c"
+        ) || { rm -f "$tmp"; return 1; }
+        [[ -n "$count" ]] || return 1
+        _record_failure_open_circuit "$provider" "$error_type" "$count"
+        return 0
+    fi
+
+    # Fallback (macOS, Git Bash): an mkdir lock (atomic). The holder
     # stamps the lock; only a lock older than 10s (a killed holder) is broken.
     until mkdir "$lock_dir" 2>/dev/null; do
         lock_ts=$(cat "$lock_dir/ts" 2>/dev/null) || lock_ts=""
@@ -98,7 +116,12 @@ record_failure() {
     fi
     rm -rf "$lock_dir" 2>/dev/null || true
 
-    # Open circuit after 3 transient failures or 1 permanent
+    _record_failure_open_circuit "$provider" "$error_type" "$count"
+}
+
+# Open circuit after 3 transient failures or 1 permanent
+_record_failure_open_circuit() {
+    local provider="$1" error_type="$2" count="$3"
     local threshold=3
     [[ "$error_type" == "permanent" ]] && threshold=1
 
