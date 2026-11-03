@@ -54,6 +54,11 @@ guard_output() {
         local anomaly_pattern='ERROR|FATAL|FAIL|PANIC|Traceback|Exception|CRITICAL|error:|failed|Error:'
         local anomaly_lines
         anomaly_lines=$(printf '%s\n' "$content" | grep -n -E "$anomaly_pattern" 2>/dev/null) || true
+        local anomaly_total=0 anomaly_max=50
+        if [[ -n "$anomaly_lines" ]]; then
+            anomaly_total=$(printf '%s\n' "$anomaly_lines" | wc -l | tr -d ' ')
+            anomaly_lines=$(printf '%s\n' "$anomaly_lines" | head -n "$anomaly_max" | cut -c1-500)
+        fi
 
         if [[ -n "$anomaly_lines" ]]; then
             # Count total lines
@@ -73,6 +78,9 @@ guard_output() {
 
             # Anomalous lines with their line numbers (already from grep -n)
             printf '%s\n' "$anomaly_lines"
+            if [[ $anomaly_total -gt $anomaly_max ]]; then
+                echo "--- [$((anomaly_total - anomaly_max)) more matching lines dropped] ---"
+            fi
 
             echo ""
             echo "--- [end of anomalies] ---"
@@ -109,10 +117,14 @@ sanitize_secrets() {
         -e 's/Bearer [A-Za-z0-9._-]\{20,\}/Bearer [REDACTED-BEARER]/g' \
         -e 's/eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*/[REDACTED-JWT]/g' \
         -e 's/-----BEGIN[A-Z ]*PRIVATE KEY-----[^-]*-----END[A-Z ]*PRIVATE KEY-----/[REDACTED-PRIVATE-KEY]/g' \
+        -e '/-----BEGIN[A-Z ]*PRIVATE KEY-----/,/-----END[A-Z ]*PRIVATE KEY-----/c\' \
+        -e '[REDACTED-PRIVATE-KEY]' \
         -e 's|postgres://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
+        -e 's|postgresql://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
         -e 's|mysql://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
         -e 's|mongodb://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
         -e 's|mongodb+srv://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
         -e 's|redis://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
+        -e 's|rediss://[^[:space:]]*|[REDACTED-CONNECTION-STRING]|g' \
         -e 's/password=[^[:space:]&]*/password=[REDACTED-PASSWORD]/g'
 }
