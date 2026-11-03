@@ -29,5 +29,10 @@ clear_cache
 got=$(unset OCTOPUS_OLLAMA_MODEL; get_agent_model ollama) || got=""
 if [[ "$got" == "llama3.3" ]]; then test_pass; else test_fail "got '$got'"; fi
 
+test_case "dispatch runs ollama without word-wrap escapes"
+clear_cache
+got=$(OCTOPUS_OLLAMA_MODEL=kannaka-brain-v3 get_agent_command ollama) || got=""
+if [[ "$got" == "ollama run --nowordwrap kannaka-brain-v3" ]]; then test_pass; else test_fail "got '$got'"; fi
+
 clear_cache
 test_summary
