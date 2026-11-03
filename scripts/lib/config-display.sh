@@ -975,6 +975,14 @@ update_knowledge_mode_config() {
     mkdir -p "$(dirname "$USER_CONFIG_FILE")"
 
     # If config exists, update only the knowledge_work_mode line (fast)
+    # sed matches nothing when the key is absent (pre-v6.0 / hand-edited config),
+    # so make sure the key exists first; sed below then sets the value.
+    if [[ -f "$USER_CONFIG_FILE" ]] && ! grep -q '^knowledge_work_mode:' "$USER_CONFIG_FILE" 2>/dev/null; then
+        # Non-fatal: if the file is not writable, the sed below fails too and
+        # save_user_config takes over, as before
+        { [[ -z "$(tail -c1 "$USER_CONFIG_FILE" 2>/dev/null)" ]] || echo
+          echo 'knowledge_work_mode: "auto"'; } >> "$USER_CONFIG_FILE" 2>/dev/null || true
+    fi
     if [[ -f "$USER_CONFIG_FILE" ]]; then
         # Use sed to update in-place (BSD sed compatible)
         if [[ "$OCTOPUS_PLATFORM" == "Darwin" ]]; then
