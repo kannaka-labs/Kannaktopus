@@ -595,7 +595,7 @@ The `tangle` phase enforces quality gates:
 | Command | Description |
 |---------|-------------|
 | `init` | Initialize workspace |
-| `spawn <agent> <prompt>` | Spawn single agent |
+| `spawn <agent> <prompt> [task_id] [role] [phase]` | Spawn single agent; a role sets its tool policy |
 | `auto <prompt>` | Smart routing (Double Diamond or agent) |
 | `fan-out <prompt>` | Send to multiple agents |
 | `map-reduce <prompt>` | Decompose and parallelize |
