@@ -25,23 +25,33 @@ resolve_octopus_model() {
     local safe_ph="${phase//[^a-zA-Z0-9]/_}"
     local safe_r="${role//[^a-zA-Z0-9]/_}"
     cache_key="MC_${safe_p}_A_${safe_a}_P_${safe_ph}_R_${safe_r}"
-    local cached_val
-    eval "cached_val=\"\${_OCTO_MODEL_CACHE_${cache_key}:-}\""
+    local cached_val var_name="_OCTO_MODEL_CACHE_${cache_key}"
+    cached_val="${!var_name:-}"
     if [[ -n "$cached_val" ]]; then
         echo "$cached_val"
         return 0
     fi
 
     # Persistent File Cache (optional, for parallel execution speed)
-    local persistent_cache="/tmp/octo-model-cache-${USER:-${USERNAME:-unknown}}-${CLAUDE_CODE_SESSION:-global}.json"
+    # Per-user directory (not shared /tmp) so other users cannot plant cache files
+    local cache_dir="${XDG_RUNTIME_DIR:-$HOME/.kannaktopus/cache}"
+    if [[ ! -d "$cache_dir" ]]; then
+        mkdir -p "$cache_dir" 2>/dev/null || true
+    fi
+    [[ "$cache_dir" != "${XDG_RUNTIME_DIR:-}" ]] && chmod 700 "$cache_dir" 2>/dev/null || true
+    local persistent_cache="${cache_dir}/octo-model-cache-${USER:-${USERNAME:-unknown}}-${CLAUDE_CODE_SESSION:-global}.json"
+    # Ignore cache files we do not own
+    if [[ -e "$persistent_cache" && ! -O "$persistent_cache" ]]; then
+        persistent_cache=""
+    fi
     # v8.49.0: Invalidate cache if config file changed since cache was written
-    if [[ -f "$persistent_cache" && -f "$config_file" && "$config_file" -nt "$persistent_cache" ]]; then
+    if [[ -n "$persistent_cache" && -f "$persistent_cache" && -f "$config_file" && "$config_file" -nt "$persistent_cache" ]]; then
         rm -f "$persistent_cache"
     fi
-    if [[ -f "$persistent_cache" ]] && command -v jq &>/dev/null; then
+    if [[ -n "$persistent_cache" && -f "$persistent_cache" ]] && command -v jq &>/dev/null; then
         cached_val=$(jq -r ".\"$cache_key\" // empty" "$persistent_cache" 2>/dev/null)
         if [[ -n "$cached_val" && "$cached_val" != "null" ]]; then
-            eval "_OCTO_MODEL_CACHE_${cache_key}=\"$cached_val\""
+            printf -v "_OCTO_MODEL_CACHE_${cache_key}" '%s' "$cached_val"
             echo "$cached_val"
             return 0
         fi
@@ -187,11 +197,12 @@ resolve_octopus_model() {
     [[ -n "$_trace" ]] && echo "[model-trace] ► Result: $resolved_model" >&2
 
     # Update memory and persistent cache
-    eval "_OCTO_MODEL_CACHE_${cache_key}=\"$resolved_model\""
-    if command -v jq &>/dev/null; then
+    printf -v "_OCTO_MODEL_CACHE_${cache_key}" '%s' "$resolved_model"
+
+    if [[ -n "$persistent_cache" && -d "$cache_dir" ]] && command -v jq &>/dev/null; then
         local cache_json="{}"
         [[ -f "$persistent_cache" ]] && cache_json=$(<"$persistent_cache")
-        echo "$cache_json" | jq --arg key "$cache_key" --arg val "$resolved_model" '.[$key] = $val' > "${persistent_cache}.tmp.$$" && mv "${persistent_cache}.tmp.$$" "$persistent_cache"
+        echo "$cache_json" | jq --arg key "$cache_key" --arg val "$resolved_model" '.[$key] = $val' > "${persistent_cache}.tmp.$$" && mv "${persistent_cache}.tmp.$$" "$persistent_cache" || true
     fi
 
     echo "$resolved_model"

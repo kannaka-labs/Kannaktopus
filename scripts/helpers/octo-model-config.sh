@@ -5,7 +5,7 @@
 set -eo pipefail
 
 CONFIG_FILE="${HOME}/.kannaktopus/config/providers.json"
-CACHE_FILE="/tmp/octo-model-cache-${USER:-${USERNAME:-unknown}}-${CLAUDE_CODE_SESSION:-global}.json"
+CACHE_FILE="${XDG_RUNTIME_DIR:-$HOME/.kannaktopus/cache}/octo-model-cache-${USER:-${USERNAME:-unknown}}-${CLAUDE_CODE_SESSION:-global}.json"
 
 # Known providers and phases for validation
 KNOWN_PROVIDERS="codex gemini claude perplexity openrouter opencode copilot ollama qwen"
