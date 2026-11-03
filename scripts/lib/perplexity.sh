@@ -94,6 +94,22 @@ openrouter_execute_model() {
         return 1
     fi
 
+    # Arms hub (lib/arms-hub.sh): run the prompt through the qos_agent tool loop
+    # so this arm can use QuantumOS and Kannaka like the CLI arms do.
+    if type arms_hub_tool_loop_ready &>/dev/null && arms_hub_tool_loop_ready; then
+        local hub_out
+        hub_out=$(printf '%s' "$prompt" | arms_hub_tool_loop "$model" "https://openrouter.ai/api/v1" OPENROUTER_API_KEY) || {
+            log ERROR "OpenRouter tool loop failed ($model)"
+            return 1
+        }
+        if [[ -n "$output_file" ]]; then
+            echo "$hub_out" > "$output_file"
+        else
+            echo "$hub_out"
+        fi
+        return 0
+    fi
+
     [[ "$VERBOSE" == "true" ]] && log DEBUG "OpenRouter request: model=$model" || true
 
     # Build JSON payload

@@ -190,6 +190,8 @@ validate_agent_command() {
             return 0 ;;
         "perplexity_execute"*) # v8.24.0: Perplexity Sonar API (Issue #22)
             return 0 ;;
+        "arms_hub_ollama_execute "*) # ollama through the arms hub tool loop (lib/arms-hub.sh)
+            return 0 ;;
         "copilot "*|"copilot")   # GitHub Copilot CLI
             return 0 ;;
         "opencode "*|"opencode")  # v9.11.0: OpenCode CLI multi-provider router
