@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### Added
+
+- **Named arms: Vigil (`kannaka-vigil`) and Ferryman (`kannaka-ferryman`, alias `kannaka-steward`)** — two standing arms run by `scripts/named_arms.py` (stdlib Python) and `scripts/lib/named-arms.sh`. Vigil, the auditor, splits a document into claims and marks each SUPPORTED, REFUTED or UNVERIFIABLE from the given sources only, then returns PUBLISH, FIX or DROP (`orchestrate.sh vigil <file>`, exit 0/10/11). It runs on GLM via OpenRouter and switches to the local `kannaka-brain-glm-v1` LoRA with `OCTOPUS_VIGIL_BACKEND=ollama`. Ferryman, the steward, sweeps read-only collectors for leads (real / plausible / liminal / scam-risk), tracks deadlines and owed replies, proposes settlements for the `Kannaka/calls-and-settlements` markets from cited evidence, and writes drafts; each settlement and draft goes through Vigil (`orchestrate.sh ferryman sweep|due|settle|draft`). It runs on the Anthropic Messages API. Neither arm has tools. Per-run and weekly USD caps refuse a call before any HTTP request. Every call, refused or not, appends a 0600 row in the rogue-agent `answers.jsonl` shape to `~/.kannaktopus/ledger/instances/<arm>/`, so `fab_grader.py nightly --root ~/.kannaktopus/ledger` grades it. Docs: `docs/NAMED-ARMS.md`.
+
+### Changed
+
+- `get_model_pricing`: `z-ai/glm-5` corrected to $1.00/$3.20 per million tokens (OpenRouter, 2026-11); added `z-ai/glm-5.3`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`.
+
 ## [10.3.0] - 2026-07-07
 
 ### Added

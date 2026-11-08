@@ -165,6 +165,7 @@ _kt_pulse_standalone() {
 source "${SCRIPT_DIR}/lib/providers.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/preflight.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/arms-hub.sh" 2>/dev/null || true
+source "${SCRIPT_DIR}/lib/named-arms.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/dispatch.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/debate.sh" 2>/dev/null || true
 source "${SCRIPT_DIR}/lib/progressive.sh" 2>/dev/null || true
@@ -533,7 +534,7 @@ CODEX_SUBAGENT_PREAMBLE="IMPORTANT: You are running as a non-interactive subagen
 
 "
 
-AVAILABLE_AGENTS="codex codex-standard codex-max codex-mini codex-general codex-spark codex-reasoning codex-large-context gemini gemini-fast gemini-image codex-review claude claude-sonnet claude-opus claude-opus-fast openrouter openrouter-glm5 openrouter-kimi openrouter-deepseek perplexity perplexity-fast ollama copilot copilot-research qwen qwen-research"
+AVAILABLE_AGENTS="codex codex-standard codex-max codex-mini codex-general codex-spark codex-reasoning codex-large-context gemini gemini-fast gemini-image codex-review claude claude-sonnet claude-opus claude-opus-fast openrouter openrouter-glm5 openrouter-kimi openrouter-deepseek perplexity perplexity-fast ollama copilot copilot-research qwen qwen-research kannaka-vigil kannaka-ferryman kannaka-steward"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # USAGE TRACKING & COST REPORTING (v4.1)
@@ -1437,6 +1438,19 @@ is_agent_available_v2() {
             ;;
         ollama*)
             command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null
+            ;;
+        kannaka-vigil)  # named arm (lib/named-arms.sh): OpenRouter GLM, or the local LoRA
+            if [[ "${OCTOPUS_VIGIL_BACKEND:-openrouter}" == "ollama" ]]; then
+                local _vh="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+                [[ "$_vh" == *://* ]] || _vh="http://$_vh"
+                _vh="${OCTOPUS_VIGIL_BASE_URL:-${_vh%/}/v1}"   # OpenAI-compatible root (ollama or llama-server)
+                curl -sf --max-time 5 "${_vh%/}/models" &>/dev/null
+            else
+                [[ -n "${OPENROUTER_API_KEY:-}" ]]
+            fi
+            ;;
+        kannaka-ferryman|kannaka-steward)
+            [[ -n "${ANTHROPIC_API_KEY:-}" ]]
             ;;
         copilot|copilot-research)
             command -v copilot &>/dev/null && {
@@ -3454,6 +3468,16 @@ case "$COMMAND" in
             exit 1
         fi
         squeeze_test "$*"
+        ;;
+    vigil)
+        # Named arm: Vigil, the auditor (lib/named-arms.sh, docs/NAMED-ARMS.md)
+        vigil_cmd "$@"
+        exit $?
+        ;;
+    ferryman|steward)
+        # Named arm: Ferryman, the steward (lib/named-arms.sh, docs/NAMED-ARMS.md)
+        ferryman_cmd "$@"
+        exit $?
         ;;
     sentinel)
         # v8.18.0: GitHub-aware work monitor

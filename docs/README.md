@@ -12,6 +12,7 @@
 
 - [IDE-INTEGRATION.md](./IDE-INTEGRATION.md) — MCP server setup for VS Code, Cursor, and other IDEs
 - [SCHEDULER.md](./SCHEDULER.md) — Scheduled jobs and daemon management
+- [NAMED-ARMS.md](./NAMED-ARMS.md) — Vigil (auditor) and Ferryman (steward): capped, tool-less arms with a gradable ledger
 - [KNOWLEDGE-WORKERS.md](./KNOWLEDGE-WORKERS.md) — Research and strategy-oriented personas
 
 ## Provider Configuration
