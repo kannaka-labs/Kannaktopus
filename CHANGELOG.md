@@ -1,3 +1,15 @@
+## [Unreleased]
+
+### Added
+
+- **Named arms: Vigil (`kannaka-vigil`) and Ferryman (`kannaka-ferryman`, alias `kannaka-steward`)** — two standing arms run by `scripts/named_arms.py` (stdlib Python) and `scripts/lib/named-arms.sh`. Vigil, the auditor, splits a document into claims and marks each SUPPORTED, REFUTED or UNVERIFIABLE from the given sources only, then returns PUBLISH, FIX or DROP (`orchestrate.sh vigil <file>`, exit 0/10/11). It runs on GLM via OpenRouter and switches to the local `kannaka-brain-glm-v1` LoRA with `OCTOPUS_VIGIL_BACKEND=ollama`. Ferryman, the steward, sweeps read-only collectors for leads (real / plausible / liminal / scam-risk), tracks deadlines and owed replies, proposes settlements for the `Kannaka/calls-and-settlements` markets from cited evidence, and writes drafts; each settlement and draft goes through Vigil (`orchestrate.sh ferryman sweep|due|settle|draft`). It runs on the Anthropic Messages API. Neither arm has tools. Per-run and weekly USD caps refuse a call before any HTTP request. Every call, refused or not, appends a 0600 row in the rogue-agent `answers.jsonl` shape to `~/.kannaktopus/ledger/instances/<arm>/`, so `fab_grader.py nightly --root ~/.kannaktopus/ledger` grades it. Docs: `docs/NAMED-ARMS.md`.
+
+- **Named arms hardening (review of PR #199):** Vigil can no longer cite the document it audits as evidence (exit 4). Every quote is checked against the input it cites: a SUPPORTED/REFUTED claim with no verified quote is downgraded to UNVERIFIABLE and PUBLISH to FIX, and a sweep item or YES/NO settlement with an unverified quote fails (exit 4); `quote_check` is logged per row. Caps reject NaN/inf/negative values; the weekly check reserves the worst case under a lock so parallel spawns cannot overshoot; a request that failed after sending books its worst case (`cost_estimated`). OpenRouter requests send `provider.max_price` and `data_collection: deny`. URL inputs are fetched from public hosts only (also after redirects). The secret mask covers PEM blocks, NATS seeds, JWTs, Telegram, AWS, `*_key=` assignments and every KEY/TOKEN/SECRET/PASSWORD env value. Fetch failures are ledgered. A Ferryman spawn needs `OCTOPUS_FERRYMAN_TASK`. Rows add `upstream_provider`, `model_sha256`, `audited_input`. On Windows the runner's directories get an owner-only ACL. Vigil prompt is `vigil-v2`.
+
+### Changed
+
+- `get_model_pricing`: added `z-ai/glm-5.3`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `kannaka-brain-glm-v1`. Existing entries (including `z-ai/glm-5`) are unchanged.
+
 ## [10.3.0] - 2026-07-07
 
 ### Added

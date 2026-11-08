@@ -295,6 +295,8 @@ ${heuristic_ctx}"
 
     # v9.13: Circuit breaker check — skip provider if circuit is open
     local provider_prefix="${agent_type%%-*}"  # codex-standard → codex
+    # The named arms are separate providers (GLM vs Claude API): one tripping must not open the other's circuit
+    case "$agent_type" in kannaka-vigil|kannaka-ferryman|kannaka-steward) provider_prefix="$agent_type" ;; esac
     if type is_provider_available &>/dev/null && ! is_provider_available "$provider_prefix"; then
         log "WARN" "Circuit open for $provider_prefix — skipping $agent_type (use fallback)"
         record_outcome "$provider_prefix" "$agent_type" "skipped" "${phase:-unknown}" "circuit_open" "0" 2>/dev/null || true

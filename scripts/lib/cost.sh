@@ -859,6 +859,11 @@ get_model_pricing() {
         claude-opus-4.6-fast)   echo "30.00:150.00" ;;  # v8.4: Fast mode - 6x cost for lower latency
         # OpenRouter models (v8.11.0)
         z-ai/glm-5)             echo "0.80:2.56" ;;    # GLM-5: code review specialist
+        z-ai/glm-5.3)           echo "0.60:2.20" ;;    # GLM-5.3: Vigil (named arm); billed ~0.56/1.78 on 2026-11-08
+        claude-opus-5-5)        echo "4.00:20.00" ;;   # Ferryman (named arm)
+        claude-sonnet-5-5)      echo "2.00:10.00" ;;
+        claude-haiku-5-5)       echo "0.10:0.50" ;;
+        kannaka-brain-glm-v1)   echo "0.00:0.00" ;;    # local LoRA (Vigil after its gate)
         moonshotai/kimi-k2.5)   echo "0.45:2.25" ;;    # Kimi K2.5: research, 262K context
         deepseek/deepseek-r1-0528) echo "0.70:2.50" ;; # DeepSeek R1: visible reasoning traces
         # Perplexity Sonar models (v8.24.0 - Issue #22)

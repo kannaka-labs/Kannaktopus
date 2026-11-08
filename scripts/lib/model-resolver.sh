@@ -184,6 +184,8 @@ resolve_octopus_model() {
             openrouter-kimi*) resolved_model="moonshotai/kimi-k2.5" ;;
             openrouter-deepseek*) resolved_model="deepseek/deepseek-r1-0528" ;;
             ollama*)         resolved_model="llama3.3" ;;
+            kannaka-vigil)   resolved_model="${OCTOPUS_VIGIL_MODEL:-z-ai/glm-5.3}" ;;   # named arm (lib/named-arms.sh)
+            kannaka-ferryman|kannaka-steward) resolved_model="${OCTOPUS_FERRYMAN_MODEL:-claude-opus-5-5}" ;;
             copilot*)        resolved_model="claude-sonnet-4.5" ;; # Copilot default; actual model selected by copilot CLI
             qwen*)           resolved_model="qwen3-coder" ;;
             opencode-research*) resolved_model="z-ai/glm-5.1" ;;

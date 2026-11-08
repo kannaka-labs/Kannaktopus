@@ -107,6 +107,9 @@ get_agent_command() {
         openrouter-glm5) echo "openrouter_execute_model z-ai/glm-5" ;;           # v8.11.0: GLM-5 via OpenRouter
         openrouter-kimi) echo "openrouter_execute_model moonshotai/kimi-k2.5" ;; # v8.11.0: Kimi K2.5 via OpenRouter
         openrouter-deepseek) echo "openrouter_execute_model deepseek/deepseek-r1-0528" ;; # v8.11.0: DeepSeek R1 via OpenRouter
+        # Named arms (lib/named-arms.sh): one tool-less API call each, every call in the ledger
+        kannaka-vigil) echo "named_arm_execute kannaka-vigil" ;;                       # Vigil, the auditor (GLM)
+        kannaka-ferryman|kannaka-steward) echo "named_arm_execute kannaka-ferryman" ;; # Ferryman, the steward (Claude API)
         perplexity|perplexity-fast)  # v8.24.0: Perplexity Sonar — web-grounded research (Issue #22)
             model=$(get_agent_model "$agent_type" "$phase" "$role")
             echo "perplexity_execute $model"
@@ -197,6 +200,7 @@ get_agent_model() {
         qwen*)       provider="qwen" ;;
         opencode*)   provider="opencode" ;;
         ollama*)     provider="ollama" ;;
+        kannaka-vigil|kannaka-ferryman|kannaka-steward) provider="named-arm" ;;
     esac
 
     local resolved_model
