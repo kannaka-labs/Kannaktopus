@@ -19,6 +19,8 @@
 #   orchestrate.sh vigil <file> [--source PATH|URL ...] [--fetch-links] [--kind K]
 #   orchestrate.sh ferryman sweep|due|settle|draft|budget ...
 #   orchestrate.sh spawn kannaka-vigil "<prompt>"     (via named_arm_execute)
+#   OCTOPUS_FERRYMAN_TASK=sweep|settle|draft orchestrate.sh spawn kannaka-ferryman "<payload>"
+#     (a Ferryman spawn without a task is refused before any call)
 #
 # Settings (all optional):
 #   OCTOPUS_VIGIL_BACKEND / _MODEL / _MAX_USD_RUN / _MAX_USD_WEEK / _MAX_TOKENS / _BASE_URL
@@ -109,8 +111,9 @@ citing only the given sources; knowledge from memory never counts as SUPPORTED.
 It never publishes or rewrites anything.
 
 Options:
-  --source, -s PATH|URL  evidence for the claims (repeatable; URLs capped at 200 KB)
-  --fetch-links          also fetch up to 10 links found in the file
+  --source, -s PATH|URL  evidence for the claims (repeatable; URLs capped at 200 KB,
+                         public hosts only; <file> itself is never evidence)
+  --fetch-links          also fetch up to 10 public links found in the file
   --kind KIND            market-call | essay | oration | pr | grant | draft | settlement | other
 
 Exit codes: 0 PUBLISH, 10 FIX, 11 DROP, 3 refused by a cost cap (no call made),
@@ -172,8 +175,10 @@ Commands:
   draft <brief.md> [--input PATH ...]
         write a draft to ~/.kannaktopus/ferryman/drafts/, then run Vigil on it.
         A draft is ready for Nick only after Vigil returns PUBLISH or FIX.
+        Vigil runs on OpenRouter: do not pass mail/DM/inbox material as --input
+        unless Nick accepts that route.
   budget    spend in the last 7 days against the weekly cap
-  config    the effective configuration (no secrets)
+  config    the effective configuration, every collector's argv included (no secrets)
 
 Model: Anthropic API claude-opus-5-5 by default (ANTHROPIC_API_KEY).
   OCTOPUS_FERRYMAN_MODEL, OCTOPUS_FERRYMAN_EFFORT (default medium)

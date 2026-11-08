@@ -858,7 +858,7 @@ get_model_pricing() {
         claude-opus-4.6)        echo "5.00:25.00" ;;
         claude-opus-4.6-fast)   echo "30.00:150.00" ;;  # v8.4: Fast mode - 6x cost for lower latency
         # OpenRouter models (v8.11.0)
-        z-ai/glm-5)             echo "1.00:3.20" ;;    # GLM-5: code review specialist (OpenRouter 2026-11)
+        z-ai/glm-5)             echo "0.80:2.56" ;;    # GLM-5: code review specialist
         z-ai/glm-5.3)           echo "0.60:2.20" ;;    # GLM-5.3: Vigil (named arm); billed ~0.56/1.78 on 2026-11-08
         claude-opus-5-5)        echo "4.00:20.00" ;;   # Ferryman (named arm)
         claude-sonnet-5-5)      echo "2.00:10.00" ;;

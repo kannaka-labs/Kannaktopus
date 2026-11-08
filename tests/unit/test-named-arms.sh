@@ -65,7 +65,7 @@ test_existing_arms_unchanged() {
     g=$(get_agent_command openrouter-glm5 2>/dev/null)
     o=$(OCTOPUS_ARMS_HUB= get_agent_command ollama 2>/dev/null)
     c=$(get_agent_command claude 2>/dev/null)
-    if [[ "$g" == "openrouter_execute_model z-ai/glm-5" && "$o" == "ollama run --nowordwrap "* && "$c" == "claude"*"--print"* ]]; then
+    if [[ "$g" == "openrouter_execute_model z-ai/glm-5" && "$o" == "ollama run --nowordwrap "* && "$c" == "claude"*"--print"*           && "$(get_model_pricing z-ai/glm-5 2>/dev/null)" == "0.80:2.56" ]]; then
         test_pass
     else
         test_fail "glm5='$g' ollama='$o' claude='$c'"
@@ -104,7 +104,7 @@ need = ["answer_id","identity","t_sent","t_done","model","model_digest","gateway
 miss = [k for k in need if k not in r]
 ok = (len(rows) == 1 and not miss and r["identity"] == "kannaka-vigil"
       and r["content_sha256"] == hashlib.sha256(r["content"].encode()).hexdigest()
-      and r["verdict"] == "FIX" and r["cost_usd"] == 0.00034 and r["prompt_version"] == "vigil-v1"
+      and r["verdict"] == "FIX" and r["cost_usd"] == 0.00034 and r["prompt_version"] == "vigil-v2"
       and len(r["recall"]) == 2 and r["error"] is None and r["system"].startswith("You are Vigil"))
 print("ok" if ok else "bad missing=%s verdict=%s cost=%s" % (miss, r.get("verdict"), r.get("cost_usd")))
 ' "$(ledger kannaka-vigil)" 2>&1)
@@ -315,6 +315,155 @@ test_spawn_path() {
     fi
 }
 
+test_self_citation_fails_schema() {
+    test_case "B1: a SUPPORTED claim citing only the audited document fails the schema (exit 4)"
+    reset_state
+    openrouter_reply '{"overall":"PUBLISH","summary":"x","claims":[{"id":"c1","claim":"shipped v2","verdict":"SUPPORTED","evidence":[{"source":"doc.md#2","quote":"The lab shipped v2 on 2026-11-01."}]}],"fixes":[]}' \
+        > "$TMP/selfcite.json"
+    local rc
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/selfcite.json" na audit "$DOC" --source "$SRC" --source "$DOC" >/dev/null
+    rc=$?
+    if [[ $rc -eq 4 ]] && grep -q 'citing only the audited document' "$(ledger kannaka-vigil)" \
+       && grep -q '"result": "self-cited"' "$(ledger kannaka-vigil)"; then
+        test_pass
+    else
+        test_fail "rc=$rc"
+    fi
+}
+
+test_fabricated_quote_downgrades() {
+    test_case "B2: a quote that is not in its source downgrades the claim to UNVERIFIABLE and PUBLISH to FIX"
+    reset_state
+    openrouter_reply '{"overall":"PUBLISH","summary":"x","claims":[
+      {"id":"c1","claim":"800 MW","verdict":"SUPPORTED","evidence":[{"source":"source.md#1","quote":"guidance:   800 MW (unchanged)"}]},
+      {"id":"c2","claim":"shipped v2","verdict":"SUPPORTED","evidence":[{"source":"source.md#1","quote":"merged on 11-05 confirmed by CI"}]}],"fixes":[]}' \
+        > "$TMP/fabq.json"
+    local rc res
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fabq.json" na audit "$DOC" --source "$SRC" >/dev/null
+    rc=$?
+    res=$(pyj '
+import json, sys
+r = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8")][-1]
+qc = {q["claim"]: q["result"] for q in r["quote_check"]}
+c = {x["id"]: x["verdict"] for x in r["verdict_json"]["claims"]}
+ok = (r["verdict"] == "FIX" and qc == {"c1": "ok", "c2": "downgraded"} and c == {"c1": "SUPPORTED", "c2": "UNVERIFIABLE"}
+      and "PUBLISH" in r["content"] and not r["schema_errors"])
+print("ok" if ok else "bad %s %s %s" % (r["verdict"], qc, c))
+' "$(ledger kannaka-vigil)" 2>&1)
+    [[ $rc -eq 10 && "$res" == ok ]] && test_pass || test_fail "rc=$rc $res"
+}
+
+test_sweep_fabricated_quote_fails() {
+    test_case "B2: a sweep item quoting words its input does not contain fails the schema, register untouched"
+    reset_state
+    printf 'From: jane@example.org\nThanks for the call.\n' > "$TMP/inbox2.txt"
+    anthropic_reply '{"items":[{"id":"mail-jane","surface":"mail","who":"jane","what":"grant","class":"real","evidence":[{"source":"inbox2.txt#2","quote":"we will fund you $50,000"}],"deadline":null,"owed_reply_since":null,"next_step":"reply","needs_nick":true}],"notes":""}' \
+        > "$TMP/sweepfab.json"
+    local rc
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/sweepfab.json" na sweep --input "$TMP/inbox2.txt" >/dev/null
+    rc=$?
+    if [[ $rc -eq 4 && ! -s "$TMP/ferryman/register.jsonl" ]] && grep -q 'quote that is not in the input' "$(ledger kannaka-ferryman)"; then
+        test_pass
+    else
+        test_fail "rc=$rc"
+    fi
+}
+
+test_nonfinite_caps_refused() {
+    test_case "N4: an infinite or NaN cap is refused (exit 2) before any request"
+    reset_state
+    local rc1 rc2 rc3
+    OCTOPUS_VIGIL_MAX_USD_RUN=inf OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" na audit "$DOC" >/dev/null 2>&1; rc1=$?
+    OCTOPUS_VIGIL_MAX_USD_WEEK=nan OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" na audit "$DOC" >/dev/null 2>&1; rc2=$?
+    OCTOPUS_VIGIL_MAX_USD_RUN=-1 OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" na audit "$DOC" >/dev/null 2>&1; rc3=$?
+    if [[ $rc1 -eq 2 && $rc2 -eq 2 && $rc3 -eq 2 && ! -s "$TMP/requests.jsonl" ]]; then
+        test_pass
+    else
+        test_fail "rc=$rc1/$rc2/$rc3"
+    fi
+}
+
+test_sent_failure_books_worst_case() {
+    test_case "N3: a request that failed after sending books its worst case; an in-flight reservation counts"
+    reset_state
+    local fake="$TMP/fake5xx"; mkdir -p "$fake"; echo '{}' > "$fake/http5xx.json"
+    local rc res rc2
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$fake/http5xx.json" na audit "$DOC" >/dev/null
+    rc=$?
+    res=$(pyj '
+import json, sys
+r = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8")][-1]
+print("ok" if r["cost_estimated"] and r["cost_usd"] == r["budget"]["worst_case_usd"] > 0 else "bad %s" % r["cost_usd"])
+' "$(ledger kannaka-vigil)" 2>&1)
+    mkdir -p "$TMP/ledger/.reservations"
+    pyj 'import json,time; print(json.dumps({"other":{"t":time.time(),"usd":1.999,"expires":time.time()+600}}))' \
+        > "$TMP/ledger/.reservations/kannaka-vigil.json"
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" na audit "$DOC" >/dev/null
+    rc2=$?
+    if [[ $rc -eq 5 && "$res" == ok && $rc2 -eq 3 ]] && grep -q 'in flight' "$(ledger kannaka-vigil)"; then
+        test_pass
+    else
+        test_fail "rc=$rc res=$res rc2=$rc2"
+    fi
+}
+
+test_private_url_refused_and_logged() {
+    test_case "N7/N9: a source URL on a private or loopback host is refused, and the refusal is a ledger row"
+    reset_state
+    local rc
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" na audit "$DOC" --source "http://127.0.0.1:8090/api" >/dev/null 2>&1
+    rc=$?
+    if [[ $rc -eq 2 && ! -s "$TMP/requests.jsonl" ]] && grep -q 'non-public address' "$(ledger kannaka-vigil)"; then
+        test_pass
+    else
+        test_fail "rc=$rc"
+    fi
+}
+
+test_ferryman_spawn_needs_task() {
+    test_case "N10: spawning Ferryman with a generic prompt and no task is refused before a call"
+    reset_state
+    local rc
+    printf 'do something useful' | OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" named_arm_execute kannaka-ferryman >/dev/null 2>&1
+    rc=$?
+    [[ $rc -eq 2 && ! -s "$TMP/requests.jsonl" ]] && test_pass || test_fail "rc=$rc"
+}
+
+test_more_secret_shapes_masked() {
+    test_case "N6: PEM, JWT, nkey seed, Telegram, AWS and *_TOKEN env values never reach the provider or ledger"
+    reset_state
+    local seed="SU""AIBDPBAUTWCWBKIO6XHQNINK3FWJW4WFGSQ7NOQ4BMKDUQGLLOPBDEWMV" \
+          jwt="eyJ""hbGciOiJlZDI1NTE5In0.eyJ""zdWIiOiJVQUJDREVGRyJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy" \
+          tg="1234567890"":AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ" aws="AKIA""IOSFODNN7EXAMPLE"
+    {
+        printf '%s\n' "-----BEGIN OPENSSH PRIVATE""-----" "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ" "-----END OPENSSH PRIVATE""-----"
+        printf 'seed %s\njwt %s\ntg %s\naws %s\nqbraid_api_key = qb_PLANTED0123456789abcdef\nrelay %s\n' \
+            "$seed" "$jwt" "$tg" "$aws" "PLANTEDrelayVALUE0123456789"
+    } | sed 's/PRIVATE-----/PRIVATE KEY-----/' > "$TMP/leaky2.md"
+    printf 'audit' | BUZZ_RELAY_PRIVATE_KEY="PLANTEDrelayVALUE0123456789" OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" \
+        na call --arm kannaka-vigil --input "$TMP/leaky2.md" >/dev/null
+    if [[ -s "$TMP/requests.jsonl" ]] && grep -q 'REDACTED:BUZZ_RELAY_PRIVATE_KEY' "$TMP/requests.jsonl"        && ! grep -q -e "PLANTED" -e "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ" -e "$seed" -e "$jwt" -e "$tg" -e "$aws" \
+            "$(ledger kannaka-vigil)" "$TMP/requests.jsonl"; then
+        test_pass
+    else
+        test_fail "a planted secret leaked: $(grep -o -e PLANTED[A-Za-z0-9]* -e 'AKIA[A-Z0-9]*' -e '1234567890:[A-Za-z0-9]*' "$TMP/requests.jsonl" | sort -u | tr '\n' ' ')"
+    fi
+}
+
+test_openrouter_routing_guards() {
+    test_case "N2/N5: OpenRouter requests deny data collection and carry max_price from the price table"
+    reset_state
+    OCTOPUS_NAMED_ARMS_FAKE_RESPONSE="$TMP/fix.json" na audit "$DOC" --source "$SRC" >/dev/null
+    local res
+    res=$(pyj '
+import json, sys
+b = [json.loads(l) for l in open(sys.argv[1])][-1]["body"]
+p = b.get("provider") or {}
+print("ok" if p.get("data_collection") == "deny" and p.get("max_price") == {"prompt": 0.6, "completion": 2.2} else "bad %s" % p)
+' "$TMP/requests.jsonl" 2>&1)
+    [[ "$res" == ok ]] && test_pass || test_fail "$res"
+}
+
 test_existing_arms_unchanged
 test_dispatch_and_allowlist
 test_ledger_row_shape
@@ -330,5 +479,14 @@ test_ferryman_anthropic_request
 test_settle_needs_evidence_then_vigil
 test_sweep_register_and_due
 test_spawn_path
+test_self_citation_fails_schema
+test_fabricated_quote_downgrades
+test_sweep_fabricated_quote_fails
+test_nonfinite_caps_refused
+test_sent_failure_books_worst_case
+test_private_url_refused_and_logged
+test_ferryman_spawn_needs_task
+test_more_secret_shapes_masked
+test_openrouter_routing_guards
 
 test_summary

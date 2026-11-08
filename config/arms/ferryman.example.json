@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to ~/.kannaktopus/config/arms/ferryman.json. The key comes from ANTHROPIC_API_KEY, never from this file. Each source is a READ-ONLY collector: argv (no shell), run with a timeout, stdout becomes one input. Collectors must never send, post or mark anything; keep credentials in their own env files.",
+  "_comment": "Copy to ~/.kannaktopus/config/arms/ferryman.json. The key comes from ANTHROPIC_API_KEY, never from this file. Each source is a READ-ONLY collector: argv (no shell), run with a timeout, stdout becomes one input. Collectors must never send, post or mark anything; keep credentials in their own env files. The runner does NOT enforce read-only: it runs whatever argv is here, so `ferryman config` prints every argv for review.",
   "backend": "anthropic",
   "model": "claude-opus-5-5",
   "effort": "medium",

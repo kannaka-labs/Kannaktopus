@@ -9,5 +9,8 @@
   "max_input_chars": 120000,
   "max_usd_run": 0.10,
   "max_usd_week": 2.00,
-  "timeout_s": 300
+  "timeout_s": 300,
+  "timeout_s_local": 900,
+  "model_sha256": null,
+  "openrouter_provider": {"data_collection": "deny"}
 }
